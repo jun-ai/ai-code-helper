@@ -1,5 +1,11 @@
 <template>
   <div class="chat-input">
+    <div v-if="uploadSummary" class="summary-chip" @click="askSummary">
+      <span class="chip-icon">💡</span>
+      <span class="chip-text">让 AI 总结刚刚上传的文档？</span>
+      <button class="chip-close" @click.stop="$emit('dismiss-summary')" title="忽略">✕</button>
+    </div>
+
     <div v-if="attachment" class="attachment-preview">
       <img v-if="isImage" :src="previewUrl" class="thumb" :alt="attachment.name" />
       <video v-else-if="isVideo" :src="previewUrl" class="thumb" muted />
@@ -62,8 +68,13 @@ export default {
     placeholder: {
       type: String,
       default: '请输入您的问题...'
+    },
+    uploadSummary: {
+      type: String,
+      default: ''
     }
   },
+  emits: ['send-message', 'dismiss-summary', 'ask-summary'],
   data() {
     return {
       inputMessage: '',
@@ -143,6 +154,11 @@ export default {
         event.preventDefault()
         this.sendMessage()
       }
+    },
+    askSummary() {
+      // 把后端生成的 summary 作为提问发出，同时清掉 chip
+      const prompt = `请基于上传的文档总结展开讲讲：${this.uploadSummary}`
+      this.$emit('ask-summary', prompt)
     },
     adjustHeight() {
       this.$nextTick(() => {
@@ -276,6 +292,29 @@ export default {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+.summary-chip {
+  max-width: 800px;
+  margin: 0 auto var(--space-2);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 8px var(--space-3);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  font-size: var(--font-sm);
+  transition: background 0.15s;
+}
+.summary-chip:hover { background: var(--color-accent); color: white; }
+.chip-icon { flex-shrink: 0; }
+.chip-text { flex: 1; }
+.chip-close {
+  border: none; background: transparent; color: inherit;
+  cursor: pointer; padding: 0 var(--space-1); border-radius: var(--radius-sm);
+}
+.chip-close:hover { background: rgba(0,0,0,0.08); }
 
 .file-input-hidden {
   display: none;

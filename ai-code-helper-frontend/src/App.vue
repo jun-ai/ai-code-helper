@@ -140,7 +140,10 @@
             <ChatInput
               ref="chatInputRef"
               :disabled="!!chat.streamingDraft.value"
+              :upload-summary="chat.pendingSummary.value"
               @send-message="onSend"
+              @ask-summary="chat.askSummary"
+              @dismiss-summary="chat.dismissSummary"
               placeholder="请输入您的编程问题..."
             />
           </main>

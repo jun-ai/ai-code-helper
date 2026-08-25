@@ -12,6 +12,7 @@ export function useChat(getSessionId, getMemoryId, onSessionUpdate) {
   const streamingDraft = ref(null)
   const abortHandle = ref(null)
   const connectionError = ref(false)
+  const pendingSummary = ref('')
 
   const loadMessages = (sid) => {
     const raw = safeGetJSON(KEY.MESSAGES(sid), [])
@@ -104,6 +105,10 @@ export function useChat(getSessionId, getMemoryId, onSessionUpdate) {
           target.attachment.indexed = !!res.indexed
           target.attachment.chunks = res.chunks || 0
           URL.revokeObjectURL(localUrl)
+          // 文档类上传成功 → 显示「让 AI 总结」chip
+          if (res.summary) {
+            pendingSummary.value = res.summary
+          }
         }
       }).catch((err) => {
         const target = messages.value.find((m) => m.id === id)
@@ -232,10 +237,17 @@ export function useChat(getSessionId, getMemoryId, onSessionUpdate) {
   const hasHistory = computed(() => messages.value.length > 0 || !!streamingDraft.value)
   const renderSegment = (seg) => renderMarkdown(seg)
 
+  const dismissSummary = () => { pendingSummary.value = '' }
+  const askSummary = (text) => {
+    pendingSummary.value = ''
+    sendMessage({ message: text, attachment: null })
+  }
+
   return {
     messages,
     streamingDraft,
     connectionError,
+    pendingSummary,
     hasHistory,
     sendMessage,
     stopGeneration,
@@ -243,6 +255,8 @@ export function useChat(getSessionId, getMemoryId, onSessionUpdate) {
     retryMessage,
     clearChat,
     persistCurrentSession,
-    renderSegment
+    renderSegment,
+    dismissSummary,
+    askSummary
   }
 }

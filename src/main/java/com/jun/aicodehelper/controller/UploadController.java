@@ -1,5 +1,6 @@
 package com.jun.aicodehelper.controller;
 
+import com.jun.aicodehelper.ai.multimodal.DocSummaryService;
 import com.jun.aicodehelper.ai.multimodal.VideoFrameExtractor;
 import com.jun.aicodehelper.ai.rag.RagIngestService;
 import jakarta.annotation.Resource;
@@ -26,7 +27,7 @@ import java.util.UUID;
 
 /**
  * 文件上传：PDF / Word / TXT / MD / 图片 / 视频。
- * 文档类自动入 RAG 库；图片 caption 入库；视频上传时同步抽帧返回帧路径。
+ * 文档类自动入 RAG 库 + 返回 summary；图片 caption 入库；视频上传时同步抽帧返回帧路径。
  */
 @Slf4j
 @RestController
@@ -52,6 +53,9 @@ public class UploadController {
 
     @Resource
     private VideoFrameExtractor videoFrameExtractor;
+
+    @Resource
+    private DocSummaryService docSummaryService;
 
     @PostMapping
     public ResponseEntity<Map<String, Object>> upload(@RequestParam("file") MultipartFile file) {
@@ -89,7 +93,9 @@ public class UploadController {
 
             // 文本类自动入 RAG
             if (INDEXABLE.contains(ext)) {
+                String extractedText = null;
                 try {
+                    extractedText = ragIngestService.extractText(target, originalName);
                     int chunks = ragIngestService.ingestFile(target, originalName);
                     result.put("indexed", true);
                     result.put("chunks", chunks);
@@ -98,8 +104,12 @@ public class UploadController {
                     result.put("indexed", false);
                     result.put("indexError", e.getMessage());
                 }
+                // summary：从已抽到的文本做 ≤200 字摘要，前端用作 chip
+                if (extractedText != null && !extractedText.isBlank()) {
+                    String summary = docSummaryService.summarize(extractedText);
+                    if (summary != null) result.put("summary", summary);
+                }
             } else if (IMAGE_EXTS.contains(ext)) {
-                // 图片：调 GLM-4V 生成 caption 入 RAG
                 try {
                     int chunks = ragIngestService.ingestImage(bytes, file.getContentType(), originalName, savedName);
                     result.put("indexed", true);
@@ -111,7 +121,6 @@ public class UploadController {
                     result.put("indexError", e.getMessage());
                 }
             } else if (VIDEO_EXTS.contains(ext)) {
-                // 视频：抽帧到 uploads/<savedName-stem>_frames/，返回帧 URL 列表
                 if (!videoFrameExtractor.isAvailable()) {
                     result.put("indexed", false);
                     result.put("frames", List.of());

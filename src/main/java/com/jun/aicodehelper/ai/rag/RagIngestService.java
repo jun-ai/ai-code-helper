@@ -3,22 +3,33 @@ package com.jun.aicodehelper.ai.rag;
 import com.jun.aicodehelper.ai.multimodal.ImageCaptionService;
 import dev.langchain4j.data.document.Document;
 import dev.langchain4j.data.embedding.Embedding;
+import dev.langchain4j.data.message.ImageContent;
+import dev.langchain4j.data.message.TextContent;
+import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.data.segment.TextSegment;
+import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.rendering.ImageType;
+import org.apache.pdfbox.rendering.PDFRenderer;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.apache.poi.xwpf.usermodel.XWPFParagraph;
 import org.springframework.stereotype.Service;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Base64;
 import java.util.List;
 
 /**
@@ -46,6 +57,11 @@ public class RagIngestService {
     @Resource
     private ImageCaptionService imageCaptionService;
 
+    @Resource
+    private ChatModel zhipuVisionChatModel;
+
+    private static final int PDF_OCR_MAX_PAGES = 8;
+
     /**
      * 读取文件 → 提取文本 → 切段 → embedding → 写入 Milvus
      * @param tempFile 已落盘的临时文件
@@ -53,18 +69,8 @@ public class RagIngestService {
      * @return 入库切片数
      */
     public int ingestFile(Path tempFile, String originalName) {
-        String lower = originalName.toLowerCase();
         try {
-            String text;
-            if (lower.endsWith(".pdf")) {
-                text = extractPdf(tempFile);
-            } else if (lower.endsWith(".docx")) {
-                text = extractDocx(tempFile);
-            } else if (lower.endsWith(".txt") || lower.endsWith(".md")) {
-                text = Files.readString(tempFile);
-            } else {
-                throw new IllegalArgumentException("不支持的文件类型: " + originalName);
-            }
+            String text = extractText(tempFile, originalName);
             if (text == null || text.isBlank()) {
                 log.warn("文件无可提取文本，跳过入库: {}", originalName);
                 return 0;
@@ -86,6 +92,22 @@ public class RagIngestService {
         } catch (Exception e) {
             throw new RuntimeException("文件入库失败: " + originalName + " - " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * 公开的纯文本抽取：上传后 summary 复用，避免重复 IO。
+     * 扫描版 PDF 自动 fallback GLM-4V OCR。
+     */
+    public String extractText(Path tempFile, String originalName) throws IOException {
+        String lower = originalName.toLowerCase();
+        if (lower.endsWith(".pdf")) {
+            return extractPdf(tempFile);
+        } else if (lower.endsWith(".docx")) {
+            return extractDocx(tempFile);
+        } else if (lower.endsWith(".txt") || lower.endsWith(".md")) {
+            return Files.readString(tempFile);
+        }
+        throw new IllegalArgumentException("不支持的文件类型: " + originalName);
     }
 
     /**
@@ -120,8 +142,47 @@ public class RagIngestService {
 
     private String extractPdf(Path path) throws IOException {
         try (PDDocument pdf = Loader.loadPDF(path.toFile())) {
-            return new PDFTextStripper().getText(pdf);
+            String text = new PDFTextStripper().getText(pdf);
+            // 扫描版 PDF：PDFBox 抽不到文本，回退 GLM-4V 多页 OCR
+            if (text == null || text.isBlank()) {
+                log.info("PDF 文本为空，转 OCR: {}", path.getFileName());
+                return ocrPdfPages(pdf);
+            }
+            return text;
         }
+    }
+
+    /**
+     * 扫描版 PDF：把每页渲染成 PNG，调 GLM-4V 视觉模型 OCR。
+     * 限前 N 页避免 token 爆炸 + 超时。
+     */
+    private String ocrPdfPages(PDDocument pdf) throws IOException {
+        PDFRenderer renderer = new PDFRenderer(pdf);
+        int total = pdf.getNumberOfPages();
+        int pages = Math.min(total, PDF_OCR_MAX_PAGES);
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < pages; i++) {
+            try {
+                BufferedImage img = renderer.renderImageWithDPI(i, 150, ImageType.RGB);
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                ImageIO.write(img, "png", baos);
+                byte[] pngBytes = baos.toByteArray();
+                String base64 = Base64.getEncoder().encodeToString(pngBytes);
+                var resp = zhipuVisionChatModel.chat(ChatRequest.builder()
+                        .messages(List.of(UserMessage.from(List.of(
+                                TextContent.from("请把图中的文字内容完整 OCR 出来，仅输出文本，不要其他说明。"),
+                                ImageContent.from(base64, "image/png")
+                        ))))
+                        .build());
+                String pageText = resp.aiMessage() == null ? null : resp.aiMessage().text();
+                if (pageText != null && !pageText.isBlank()) {
+                    sb.append(pageText.trim()).append('\n');
+                }
+            } catch (Exception e) {
+                log.warn("PDF 第 {} 页 OCR 失败: {}", i + 1, e.getMessage());
+            }
+        }
+        return sb.toString();
     }
 
     private String extractDocx(Path path) throws Exception {
