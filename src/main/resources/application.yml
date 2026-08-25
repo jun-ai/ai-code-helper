@@ -32,6 +32,9 @@ logging:
   level:
     # bigmodel.cn 空闲 60s 断连接，SSE 5s 默认读超时误判超时刷屏；调为 ERROR 只保留错误事件
     dev.langchain4j.mcp.client.transport.http.SseEventListener: ERROR
+  pattern:
+    # 把 traceId（由 TraceIdFilter 注入 MDC）打到每条日志里，便于整链路排查
+    level: "%5p [traceId=%X{traceId:-}]"
 minimax:
   api-key: ${MINIMAX_API_KEY:}
   base-url: https://api.minimaxi.com/v1
@@ -58,6 +61,10 @@ rag:
   # Query 改写开关 + 变体数
   query-rewrite-enabled: true
   query-rewrite-variants: 3
+  # 历史感知改写：传入最近 N 轮对话作为上下文（≤0 关闭）
+  query-rewrite-history-turns: 2
+  # HyDE（Hypothetical Document Embeddings）：让 LLM 生成假设答案再向量检索
+  hyde-enabled: false
   # 重排序开关（关掉即按融合分直排）
   rerank-enabled: true
   rerank-min-candidates: 5

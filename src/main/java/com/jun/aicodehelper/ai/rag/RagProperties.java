@@ -51,4 +51,10 @@ public class RagProperties {
 
     /** Query 改写：生成几个变体（含原 query） */
     private int queryRewriteVariants = 3;
+
+    /** HyDE（Hypothetical Document Embeddings）：让 LLM 写一段假设答案再拿去向量检索 */
+    private boolean hydeEnabled = false;
+
+    /** 上下文感知改写：传入最近 N 条对话作为 query 改写时的上下文（≤0 表示不启用） */
+    private int queryRewriteHistoryTurns = 2;
 }

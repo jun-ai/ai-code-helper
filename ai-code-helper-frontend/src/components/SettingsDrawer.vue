@@ -49,6 +49,10 @@
           <n-space vertical>
             <n-button block @click="saveSettings">保存</n-button>
             <n-button block secondary @click="resetSettings">恢复默认</n-button>
+            <n-button block secondary type="primary" @click="openKB">
+              <template #icon><span>📚</span></template>
+              打开知识库管理
+            </n-button>
           </n-space>
         </n-form-item>
       </n-form>
@@ -79,7 +83,7 @@ export default {
   props: {
     show: { type: Boolean, default: false }
   },
-  emits: ['update:show'],
+  emits: ['update:show', 'open-kb'],
   setup(props, { emit }) {
     const stored = safeGetJSON(KEY.SETTINGS, DEFAULT_SETTINGS) || DEFAULT_SETTINGS
     const form = reactive({ ...DEFAULT_SETTINGS, ...stored })
@@ -105,11 +109,15 @@ export default {
       safeSet(KEY.SETTINGS, JSON.stringify(DEFAULT_SETTINGS))
     }
 
+    const openKB = () => {
+      emit('open-kb')
+    }
+
     watch(() => form.theme, (val) => {
       document.documentElement.setAttribute('data-theme', val)
     })
 
-    return { form, chatModels, visionModels, saveSettings, resetSettings }
+    return { form, chatModels, visionModels, saveSettings, resetSettings, openKB }
   }
 }
 </script>

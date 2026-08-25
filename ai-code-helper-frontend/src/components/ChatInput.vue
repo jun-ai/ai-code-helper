@@ -1,9 +1,23 @@
 <template>
-  <div class="chat-input">
-    <div v-if="uploadSummary" class="summary-chip" @click="askSummary">
-      <span class="chip-icon">💡</span>
-      <span class="chip-text">让 AI 总结刚刚上传的文档？</span>
-      <button class="chip-close" @click.stop="$emit('dismiss-summary')" title="忽略">✕</button>
+  <div
+    class="chat-input"
+    :class="{ 'drag-over': isDragging }"
+    @dragenter.prevent="onDragEnter"
+    @dragover.prevent="onDragOver"
+    @dragleave.prevent="onDragLeave"
+    @drop.prevent="onDrop"
+  >
+    <transition name="chip">
+      <div v-if="uploadSummary" class="summary-chip" @click="askSummary">
+        <span class="chip-icon">💡</span>
+        <span class="chip-text">让 AI 总结刚刚上传的文档？</span>
+        <button class="chip-close" @click.stop="$emit('dismiss-summary')" title="忽略">✕</button>
+      </div>
+    </transition>
+
+    <div v-if="isDragging" class="drop-hint">
+      <span class="drop-emoji">📥</span>
+      <span>松开鼠标即可上传</span>
     </div>
 
     <div v-if="attachment" class="attachment-preview">
@@ -25,7 +39,7 @@
         class="attach-btn"
         :disabled="disabled"
         @click="openFilePicker"
-        title="附件（图片 / 视频 / 文档）"
+        title="附件（图片 / 视频 / 文档），或拖入文件"
       >📎</button>
       <input
         ref="fileInputRef"
@@ -48,11 +62,15 @@
         :disabled="disabled || (!inputMessage.trim() && !attachment)"
         @click="sendMessage"
         class="send-button"
+        :title="inputMessage.trim() || attachment ? '发送 (Ctrl+Enter)' : '请输入内容'"
       >
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
           <path d="M2 21l21-9L2 3v7l15 2-15 2v7z" fill="currentColor"/>
         </svg>
       </button>
+    </div>
+    <div class="hint-line">
+      <span>Enter 发送 · Shift+Enter 换行 · Ctrl+Enter 强制发送 · 拖入文件快速上传</span>
     </div>
   </div>
 </template>
@@ -80,7 +98,8 @@ export default {
       inputMessage: '',
       attachment: null,
       previewUrl: '',
-      uploadStatus: ''
+      uploadStatus: '',
+      isDragging: false
     }
   },
   computed: {
@@ -120,7 +139,10 @@ export default {
     onFileSelected(event) {
       const file = event.target.files && event.target.files[0]
       if (!file) return
-      // 50MB 上限（与服务端对齐）
+      this.acceptFile(file)
+      event.target.value = ''
+    },
+    acceptFile(file) {
       if (file.size > 50 * 1024 * 1024) {
         alert('文件超过 50MB')
         return
@@ -129,8 +151,17 @@ export default {
       if (this.previewUrl) URL.revokeObjectURL(this.previewUrl)
       this.previewUrl = URL.createObjectURL(file)
       this.uploadStatus = ''
-      // 允许重复选同一文件
-      event.target.value = ''
+    },
+    onDragEnter() { this.isDragging = true },
+    onDragOver() { this.isDragging = true },
+    onDragLeave(e) {
+      if (e.target === e.currentTarget) this.isDragging = false
+    },
+    onDrop(event) {
+      this.isDragging = false
+      const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0]
+      if (!file) return
+      this.acceptFile(file)
     },
     clearAttachment() {
       if (this.previewUrl) URL.revokeObjectURL(this.previewUrl)
@@ -150,13 +181,13 @@ export default {
       this.adjustHeight()
     },
     handleKeyDown(event) {
-      if (event.key === 'Enter' && !event.shiftKey) {
+      if (event.key === 'Enter') {
+        if (event.shiftKey) return
         event.preventDefault()
         this.sendMessage()
       }
     },
     askSummary() {
-      // 把后端生成的 summary 作为提问发出，同时清掉 chip
       const prompt = `请基于上传的文档总结展开讲讲：${this.uploadSummary}`
       this.$emit('ask-summary', prompt)
     },
@@ -182,9 +213,15 @@ export default {
 
 <style scoped>
 .chat-input {
-  padding: 12px 20px 20px;
+  padding: 8px 20px 14px;
   background-color: white;
   border-top: 1px solid #e1e5e9;
+  position: relative;
+  transition: background-color 0.15s;
+}
+.chat-input.drag-over {
+  background-color: #e8f0ff;
+  border-top-color: #007bff;
 }
 
 .attachment-preview {
@@ -218,9 +255,7 @@ export default {
   justify-content: center;
 }
 
-.file-emoji {
-  font-size: 28px;
-}
+.file-emoji { font-size: 28px; }
 
 .attachment-meta {
   flex: 1;
@@ -237,15 +272,8 @@ export default {
   white-space: nowrap;
 }
 
-.attachment-size {
-  font-size: 11px;
-  color: #888;
-}
-
-.attachment-status {
-  font-size: 11px;
-  color: #0d6efd;
-}
+.attachment-size { font-size: 11px; color: #888; }
+.attachment-status { font-size: 11px; color: #0d6efd; }
 
 .remove-btn {
   width: 24px;
@@ -258,11 +286,7 @@ export default {
   font-size: 14px;
   line-height: 1;
 }
-
-.remove-btn:hover {
-  background: #e03131;
-  color: #fff;
-}
+.remove-btn:hover { background: #e03131; color: #fff; }
 
 .input-container {
   display: flex;
@@ -283,19 +307,12 @@ export default {
   flex-shrink: 0;
   transition: background-color 0.2s;
 }
-
-.attach-btn:hover:not(:disabled) {
-  background-color: #e2e6ea;
-}
-
-.attach-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
+.attach-btn:hover:not(:disabled) { background-color: #e2e6ea; }
+.attach-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .summary-chip {
   max-width: 800px;
-  margin: 0 auto var(--space-2);
+  margin: 0 auto 8px;
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -316,9 +333,27 @@ export default {
 }
 .chip-close:hover { background: rgba(0,0,0,0.08); }
 
-.file-input-hidden {
-  display: none;
+.chip-enter-active, .chip-leave-active { transition: opacity 0.2s, transform 0.2s; }
+.chip-enter-from, .chip-leave-to { opacity: 0; transform: translateY(4px); }
+
+.drop-hint {
+  max-width: 800px;
+  margin: 0 auto 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px;
+  border: 2px dashed #007bff;
+  border-radius: 12px;
+  color: #007bff;
+  background: rgba(0, 123, 255, 0.05);
+  font-size: 14px;
+  pointer-events: none;
 }
+.drop-emoji { font-size: 18px; }
+
+.file-input-hidden { display: none; }
 
 .input-textarea {
   flex: 1;
@@ -334,16 +369,8 @@ export default {
   max-height: 120px;
   overflow-y: auto;
 }
-
-.input-textarea:focus {
-  border-color: #007bff;
-}
-
-.input-textarea:disabled {
-  background-color: #f5f5f5;
-  color: #999;
-  cursor: not-allowed;
-}
+.input-textarea:focus { border-color: #007bff; }
+.input-textarea:disabled { background-color: #f5f5f5; color: #999; cursor: not-allowed; }
 
 .send-button {
   width: 44px;
@@ -356,30 +383,25 @@ export default {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background-color 0.2s;
+  transition: background-color 0.2s, transform 0.1s;
   flex-shrink: 0;
 }
+.send-button:hover:not(:disabled) { background-color: #0056b3; }
+.send-button:active:not(:disabled) { transform: scale(0.94); }
+.send-button:disabled { background-color: #ccc; cursor: not-allowed; }
 
-.send-button:hover:not(:disabled) {
-  background-color: #0056b3;
-}
-
-.send-button:disabled {
-  background-color: #ccc;
-  cursor: not-allowed;
+.hint-line {
+  max-width: 800px;
+  margin: 4px auto 0;
+  font-size: 11px;
+  color: #999;
+  text-align: center;
 }
 
 @media (max-width: 768px) {
-  .chat-input {
-    padding: 12px 15px 15px;
-  }
-
-  .input-container {
-    gap: 6px;
-  }
-
-  .input-textarea {
-    font-size: 16px;
-  }
+  .chat-input { padding: 6px 15px 10px; }
+  .input-container { gap: 6px; }
+  .input-textarea { font-size: 16px; }
+  .hint-line { display: none; }
 }
 </style>

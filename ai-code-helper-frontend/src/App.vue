@@ -42,7 +42,7 @@
                   <MoonOutline v-else />
                 </n-icon>
               </button>
-              <button class="footer-btn" @click="settingsVisible = true" title="设置">
+              <button class="footer-btn" @click="settingsVisible = true" title="设置 (Ctrl+,)">
                 <n-icon size="16"><SettingsOutline /></n-icon>
               </button>
             </div>
@@ -110,7 +110,7 @@
                       <span class="streaming-cursor">▍</span>
                     </template>
                     <template v-else-if="chat.streamingDraft.value.status === 'error'">
-                      <div class="error-bubble">
+                      <div class="error-bubble shake">
                         <span class="error-icon-inline">⚠️</span>
                         <span class="error-text">{{ chat.streamingDraft.value.error || '生成失败' }}</span>
                       </div>
@@ -118,7 +118,11 @@
                   </div>
                   <div class="message-footer">
                     <span class="message-time">
-                      {{ chat.streamingDraft.value.status === 'streaming' ? '正在输入...' : '已中断' }}
+                      <span v-if="chat.streamingDraft.value.status === 'streaming'" class="typing-dots">
+                        <span></span><span></span><span></span>
+                        正在输入
+                      </span>
+                      <span v-else>已中断</span>
                     </span>
                     <div class="message-actions">
                       <button
@@ -148,7 +152,11 @@
             />
           </main>
 
-          <SettingsDrawer v-model:show="settingsVisible" />
+          <SettingsDrawer
+            v-model:show="settingsVisible"
+            @open-kb="kbVisible = true"
+          />
+          <KnowledgeBaseDrawer v-model:show="kbVisible" />
 
           <transition name="fade">
             <div v-if="chat.connectionError.value" class="connection-error">
@@ -163,10 +171,9 @@
 </template>
 
 <script>
-import { computed, ref, onMounted, nextTick } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import {
-  NConfigProvider, NMessageProvider, NNotificationProvider, NIcon,
-  createDiscreteApi
+  NConfigProvider, NMessageProvider, NNotificationProvider, NIcon
 } from 'naive-ui'
 import {
   AddOutline, ChatbubblesOutline, TrashOutline,
@@ -175,10 +182,12 @@ import {
 import ChatMessage from './components/ChatMessage.vue'
 import ChatInput from './components/ChatInput.vue'
 import SettingsDrawer from './components/SettingsDrawer.vue'
+import KnowledgeBaseDrawer from './components/KnowledgeBaseDrawer.vue'
 import { useTheme } from './composables/useTheme.js'
 import { useSessions } from './composables/useSessions.js'
 import { useChat } from './composables/useChat.js'
 import { useScrollFollow } from './composables/useScrollFollow.js'
+import { attachCodeCopyButtons } from './utils/markdown.js'
 
 export default {
   name: 'App',
@@ -186,7 +195,7 @@ export default {
     NConfigProvider, NMessageProvider, NNotificationProvider, NIcon,
     AddOutline, ChatbubblesOutline, TrashOutline,
     SunnyOutline, MoonOutline, SettingsOutline, SparklesOutline,
-    ChatMessage, ChatInput, SettingsDrawer
+    ChatMessage, ChatInput, SettingsDrawer, KnowledgeBaseDrawer
   },
   setup() {
     const { theme, toggle: toggleTheme } = useTheme()
@@ -209,9 +218,38 @@ export default {
     const chat = useChat(getSid, getMid, onSessionUpdate)
 
     const settingsVisible = ref(false)
+    const kbVisible = ref(false)
+
+    // 流式段刷新后给已完成的 markdown 段挂上复制按钮（完成的段才渲染 Markdown，不完整的纯文本不动）
+    watch(
+      () => chat.streamingDraft.value && chat.streamingDraft.value.completedSegments.length,
+      () => {
+        nextTick(() => {
+          const container = messagesContainerRef.value
+          if (!container) return
+          container.querySelectorAll('.stream-segment').forEach((el) => {
+            attachCodeCopyButtons(el)
+          })
+        })
+      }
+    )
+
+    // 全局快捷键：Ctrl+, 打开设置、Esc 关闭设置、Ctrl+K 新建会话
+    const handleKeydown = (e) => {
+      const isMod = e.ctrlKey || e.metaKey
+      if (isMod && e.key === ',') {
+        e.preventDefault()
+        settingsVisible.value = true
+      } else if (isMod && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault()
+        handleNewSession()
+      } else if (e.key === 'Escape' && settingsVisible.value) {
+        settingsVisible.value = false
+      }
+    }
 
     const handleNewSession = () => {
-      ensureCurrent() // 若当前为空则建一个；先 abort 旧流
+      ensureCurrent()
       const id = createSession('新会话')
       switchSession(id)
     }
@@ -229,7 +267,6 @@ export default {
     const onSend = (payload) => {
       const msg = (payload.message || '').trim()
       chat.sendMessage({ message: msg, attachment: payload.attachment })
-      // 自动命名：取首条 user 消息前 24 字
       if (msg && currentSessionId.value) {
         const s = sessionStore.sessions.value.find((s) => s.id === currentSessionId.value)
         if (s && (s.title === '新会话' || !s.title)) {
@@ -245,6 +282,11 @@ export default {
       cleanupOldSessions()
       ensureCurrent()
       nextTick(() => scrollToBottom(true))
+      window.addEventListener('keydown', handleKeydown)
+    })
+
+    onBeforeUnmount(() => {
+      window.removeEventListener('keydown', handleKeydown)
     })
 
     return {
@@ -253,6 +295,7 @@ export default {
       grouped,
       chat,
       settingsVisible,
+      kbVisible,
       handleNewSession,
       handleSwitch,
       handleDelete,
@@ -406,6 +449,7 @@ export default {
   font-size: var(--font-xs);
   color: var(--color-text-muted);
   cursor: pointer;
+  transition: all 0.15s;
 }
 .clear-btn:hover { color: var(--color-error); border-color: var(--color-error); }
 
@@ -441,6 +485,7 @@ export default {
   display: flex;
   margin-bottom: var(--space-5);
   padding: 0 var(--space-5);
+  animation: msg-enter 0.25s ease-out both;
 }
 .ai-message { justify-content: flex-start; flex-direction: row; }
 
@@ -475,6 +520,52 @@ export default {
   animation: blink 1s step-start infinite;
 }
 
+/* 流式段统一 Markdown 样式（与 ChatMessage.vue 对齐） */
+.stream-segment { font-size: var(--font-md); line-height: 1.5; }
+.stream-segment :deep(.code-block) {
+  position: relative;
+  margin: 0.5em 0;
+}
+.stream-segment :deep(.code-block > pre) {
+  background: #1e1e1e;
+  color: #d4d4d4;
+  padding: 1.8em 1em 1em;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 0;
+}
+.stream-segment :deep(.code-block code) {
+  background: transparent;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 0.9em;
+}
+.stream-segment :deep(.code-lang) {
+  position: absolute;
+  top: 6px;
+  left: 12px;
+  font-size: 11px;
+  color: #9cdcfe;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  pointer-events: none;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+}
+.stream-segment :deep(.code-copy-btn) {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #d4d4d4;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.stream-segment :deep(.code-block:hover > .code-copy-btn) { opacity: 1; }
+
 .retry-indicator {
   display: flex; align-items: center; gap: 6px;
   font-size: var(--font-xs); color: var(--color-warn);
@@ -487,10 +578,32 @@ export default {
 
 @keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
 @keyframes blink { 50% { opacity: 0; } }
+@keyframes msg-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes shake {
+  10%, 90% { transform: translateX(-1px); }
+  20%, 80% { transform: translateX(2px); }
+  30%, 50%, 70% { transform: translateX(-3px); }
+  40%, 60% { transform: translateX(3px); }
+}
 
 .error-bubble {
   display: flex; align-items: center; gap: 8px;
   color: var(--color-error);
+}
+.error-bubble.shake { animation: shake 0.4s; }
+
+/* AI 正在输入三点动画 */
+.typing-dots { display: inline-flex; align-items: center; gap: 4px; }
+.typing-dots span {
+  width: 4px; height: 4px; border-radius: 50%;
+  background: var(--color-text-faint);
+  animation: typing-bounce 1.2s ease-in-out infinite;
+}
+.typing-dots span:nth-child(2) { animation-delay: 0.15s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes typing-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30% { transform: translateY(-3px); opacity: 1; }
 }
 
 .message-footer {
@@ -518,6 +631,7 @@ export default {
   border-radius: var(--radius-md);
   z-index: 1000;
   display: flex; align-items: center; gap: 8px;
+  animation: msg-enter 0.25s ease-out;
 }
 .fade-enter-active, .fade-leave-active { transition: opacity 0.2s; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }

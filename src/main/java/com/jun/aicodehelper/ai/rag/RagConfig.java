@@ -103,14 +103,28 @@ public class RagConfig {
     }
 
     private void ingest(EmbeddingStore<TextSegment> store) {
-        List<Document> documents = loadAllDocuments(Paths.get("src/main/resources/docs"));
+        ingestFromDir(store, Paths.get("src/main/resources/docs"));
+    }
+
+    /**
+     * 重新从指定目录导入全部文档，供管理 API 调用。
+     */
+    public void reingestFromDir(Path dir) {
+        if (dir == null) {
+            dir = Paths.get("src/main/resources/docs");
+        }
+        EmbeddingStore<TextSegment> store = embeddingStore();
+        ingestFromDir(store, dir);
+    }
+
+    private void ingestFromDir(EmbeddingStore<TextSegment> store, Path dir) {
+        List<Document> documents = loadAllDocuments(dir);
         List<TextSegment> segments = new ArrayList<>();
         for (Document document : documents) {
             segments.addAll(textSplitter.split(document));
         }
         List<Embedding> embeddings = minimaxEmbeddingModel.embedAll(segments).content();
         store.addAll(embeddings, segments);
-        // BM25 同步构建：与 Milvus 共用同一份 segments，保持双路召回一致
         if (ragProperties.isBm25Enabled()) {
             bm25Index.rebuild(segments);
         }

@@ -133,6 +133,61 @@ public class Bm25Index {
     }
 
     /**
+     * 删除 file_name 匹配的所有段（与 Milvus 删除同步走）。
+     * 返回被删段数。
+     */
+    public int removeByFileName(String fileName) {
+        if (fileName == null || fileName.isEmpty()) return 0;
+        lock.writeLock().lock();
+        try {
+            // 收集要删的 docId
+            List<Integer> toRemove = new ArrayList<>();
+            for (Map.Entry<Integer, TextSegment> e : docs.entrySet()) {
+                String fn = e.getValue().metadata().getString("file_name");
+                if (fileName.equals(fn)) {
+                    toRemove.add(e.getKey());
+                }
+            }
+            if (toRemove.isEmpty()) return 0;
+            for (int id : toRemove) {
+                TextSegment seg = docs.remove(id);
+                docLen.remove(id);
+                // 重建 tf，倒着删 postings 和 df
+                List<String> tokens = tokenize(seg.text());
+                Map<String, Integer> tf = new HashMap<>();
+                for (String t : tokens) {
+                    tf.merge(t, 1, Integer::sum);
+                }
+                for (String t : tf.keySet()) {
+                    Map<Integer, Integer> post = postings.get(t);
+                    if (post != null) {
+                        post.remove(id);
+                        if (post.isEmpty()) postings.remove(t);
+                    }
+                    int cur = df.getOrDefault(t, 0);
+                    int next = cur - 1;
+                    if (next <= 0) {
+                        df.remove(t);
+                    } else {
+                        df.put(t, next);
+                    }
+                }
+                totalDocs--;
+            }
+            if (totalDocs > 0) {
+                int totalLen = docLen.values().stream().mapToInt(Integer::intValue).sum();
+                avgDocLen = (double) totalLen / totalDocs;
+            } else {
+                avgDocLen = 0;
+            }
+            log.info("BM25 按文件删除: file={} 段数={}", fileName, toRemove.size());
+            return toRemove.size();
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    /**
      * 简易 tokenizer：CJK 按双字 gram 切，英文/数字按单词切，混合拼接。
      */
     static List<String> tokenize(String text) {
