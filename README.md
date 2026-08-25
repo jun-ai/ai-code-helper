@@ -45,8 +45,30 @@
 - **Vue 3 + Naive UI 2.38**：组件库 + Pinia 状态 + `@vicons/ionicons5` 图标
 - **设计 token 双主题**：`tokens.css` 颜色/间距/圆角/阴影全 token 化，亮/暗主题切换
 - **多会话侧栏**：今天/昨天/更早分组、自动命名、删除、导出 JSON
-- **设置抽屉**：API Key / 模型选择 / RAG 开关
+- **设置抽屉**：API Key / 模型选择 / RAG 开关 / **📚 知识库管理入口**
+- **流式 Markdown 实时渲染**：已完成段自动挂语言标签 + 一键复制
+- **图片附件灯箱**：Naive UI n-image 点击全屏预览
+- **拖拽上传**：拖文件到输入框直接走上传
+- **快捷键**：`Ctrl+,` 开设置、`Ctrl+K` 新会话、`Esc` 关抽屉
+- **微动画**：进入 fadeInUp、AI 思考三点跳动、错误抖动
 - **Vite 按需加载**：`unplugin-vue-components` + `naive-ui-resolver`
+
+#### 知识库管理
+- **RagAdminController**：`/api/rag/docs` 列表、`DELETE /api/rag/docs/{file}` 删单文件、`POST /api/rag/rebuild` 全量重建
+- **前端抽屉**：KnowledgeBaseDrawer 展示内置 / 上传两类来源，支持锁定图标 + 删除二次确认
+- **重建策略**：删除上传文件 → 清空 Milvus collection → 重新扫描启动期 docs + 剩余上传文件入库
+
+#### 全链路 traceId
+- `TraceIdFilter`（Order=HIGHEST+10）：透传 `X-Trace-Id` header 或自动生成 16 位短码
+- 响应头回写 `X-Trace-Id` 便于前端回传排查
+- 日志 pattern `level: "%5p [traceId=%X{traceId:-}]"` 把 traceId 注入每条日志
+
+#### RAG 增强
+- **HyDE（可选）**：让 LLM 写一段"假设性答案"作为额外 query 走向量检索，弥补口语 query 与文档语义空间差距。开关：`rag.hyde-enabled=true`
+- **历史感知改写**：QueryRewriter 支持 `rewrite(q, history)`，从 ChatMemory 抽最近 N 轮对话作为改写上下文，自动解析"它/那"指代
+- **可热切换**：所有阶段开关都在 `rag.*` 配置项里，无需改代码
+
+#### 数据与记忆
 
 #### 数据与记忆
 - **MySQL 会话记忆**：chat_memory 表持久化，多轮对话重启不丢
