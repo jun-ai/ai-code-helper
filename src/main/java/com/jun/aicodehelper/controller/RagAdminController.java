@@ -20,7 +20,7 @@ import java.util.Map;
  */
 @Slf4j
 @RestController
-@RequestMapping("/api/rag")
+@RequestMapping("/rag")
 public class RagAdminController {
 
     @Resource
