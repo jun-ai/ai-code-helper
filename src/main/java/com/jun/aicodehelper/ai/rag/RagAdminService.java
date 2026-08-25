@@ -75,21 +75,29 @@ public class RagAdminService {
                 log.warn("扫描内置 docs 目录失败: {}", e.getMessage());
             }
         }
-        // 2. 上传文档（OSS）
-        String prefix = ossProperties.getKeyPrefix() + "/";
-        for (OssService.OssObject obj : ossService.listByPrefix(prefix)) {
-            String key = obj.getKey();
-            // 跳过非文本类（图片、视频帧等）
-            String lower = key.toLowerCase();
-            if (!(lower.endsWith(".pdf") || lower.endsWith(".docx") || lower.endsWith(".md") || lower.endsWith(".txt"))) {
-                continue;
+        // 2. 上传文档（OSS）：OSS 未启用时降级为只返回内置，不抛 500
+        if (!ossService.isAvailable()) {
+            log.debug("OSS 未启用，跳过上传文档列表");
+            return result;
+        }
+        try {
+            String prefix = ossProperties.getKeyPrefix() + "/";
+            for (OssService.OssObject obj : ossService.listByPrefix(prefix)) {
+                String key = obj.getKey();
+                // 跳过非文本类（图片、视频帧等）
+                String lower = key.toLowerCase();
+                if (!(lower.endsWith(".pdf") || lower.endsWith(".docx") || lower.endsWith(".md") || lower.endsWith(".txt"))) {
+                    continue;
+                }
+                DocSummary d = new DocSummary();
+                d.fileName = key;  // 删除按 key 定位
+                d.source = "uploaded";
+                d.path = key;
+                d.sizeBytes = obj.getSize();
+                result.add(d);
             }
-            DocSummary d = new DocSummary();
-            d.fileName = key;  // 删除按 key 定位
-            d.source = "uploaded";
-            d.path = key;
-            d.sizeBytes = obj.getSize();
-            result.add(d);
+        } catch (Exception e) {
+            log.warn("OSS 列表拉取失败，降级返回内置文档: {}", e.getMessage());
         }
         return result;
     }
@@ -97,6 +105,9 @@ public class RagAdminService {
     public DeleteResult deleteUploaded(String savedName) {
         if (savedName == null || savedName.isEmpty()) {
             return new DeleteResult(false, "文件名无效");
+        }
+        if (!ossService.isAvailable()) {
+            return new DeleteResult(false, "OSS 未启用，无法删除上传文件");
         }
         String key = resolveKey(savedName);
         try {
@@ -122,6 +133,7 @@ public class RagAdminService {
 
     /**
      * 重建索引：清空 Milvus collection + 重新扫描启动期 docs 目录 + 重新入库现存 OSS 对象。
+     * OSS 未启用时只重建内置文档。
      */
     public RebuildResult rebuildAll() {
         long t0 = System.nanoTime();
@@ -133,6 +145,11 @@ public class RagAdminService {
             }
             ragConfig.reingestFromDir(null);
             rebuilt++;
+            if (!ossService.isAvailable()) {
+                long elapsedMs = (System.nanoTime() - t0) / 1_000_000;
+                log.warn("RAG 管理 - 重建完成（OSS 未启用，仅内置文档）: 文档数={} elapsed={}ms", rebuilt, elapsedMs);
+                return new RebuildResult(true, rebuilt, elapsedMs, "重建完成（OSS 未启用，仅重建内置文档）");
+            }
             String prefix = ossProperties.getKeyPrefix() + "/";
             for (OssService.OssObject obj : ossService.listByPrefix(prefix)) {
                 String key = obj.getKey();

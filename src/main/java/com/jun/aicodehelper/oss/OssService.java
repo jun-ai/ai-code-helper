@@ -42,6 +42,11 @@ public class OssService {
     @Autowired(required = false)
     private OSS oss;
 
+    /** OSS 是否就绪（启用且 client bean 存在）。调用方据此决定是否降级。 */
+    public boolean isAvailable() {
+        return props.isEnabled() && oss != null;
+    }
+
     // ---------- 上传链路 ----------
 
     /** 生成前端 PUT 直传用的签名 URL */

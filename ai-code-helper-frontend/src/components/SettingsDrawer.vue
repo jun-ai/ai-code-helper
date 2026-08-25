@@ -70,6 +70,7 @@
 
 <script>
 import { reactive, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { NDrawer, NDrawerContent, NForm, NFormItem, NInput, NSelect, NSwitch, NRadioGroup, NRadio, NDivider, NSpace, NButton } from 'naive-ui'
 import { safeGetJSON, safeSet, KEY } from '../composables/storage.js'
 
@@ -96,6 +97,7 @@ export default {
   setup(props, { emit }) {
     const stored = safeGetJSON(KEY.SETTINGS, DEFAULT_SETTINGS) || DEFAULT_SETTINGS
     const form = reactive({ ...DEFAULT_SETTINGS, ...stored })
+    const router = useRouter()
 
     const chatModels = [
       { label: 'glm-4-flash（推荐·免费）', value: 'glm-4-flash' },
@@ -119,9 +121,9 @@ export default {
     }
 
     const goAdmin = () => {
-      window.location.hash = ''
-      window.location.pathname = '/admin'
-      window.location.reload()
+      // 先把抽屉关掉再跳，否则动画还在跑就被路由切换打断
+      emit('update:show', false)
+      router.push('/admin')
     }
 
     // 暴露给模板的转发方法，避免 _ctx.emit 为 undefined
