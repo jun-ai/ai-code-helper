@@ -42,3 +42,33 @@ services:
     depends_on:
       - etcd
       - minio
+
+  prometheus:
+    container_name: ai-code-helper-prometheus
+    image: prom/prometheus:v2.54.1
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./volumes/prometheus:/prometheus
+    ports:
+      - "9090:9090"
+    # 把宿主机网关加进 extra_hosts，让容器能通过 host.docker.internal 访问宿主机的 Spring Boot
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+
+  grafana:
+    container_name: ai-code-helper-grafana
+    image: grafana/grafana:11.2.2
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./volumes/grafana:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus

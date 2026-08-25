@@ -1,5 +1,8 @@
 package com.jun.aicodehelper.security;
 
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -19,6 +22,28 @@ public class SseConcurrencyGuard {
 
     @Value("${api.sse.max-concurrent-per-ip:5}")
     private int maxConcurrentPerIp;
+
+    private final MeterRegistry meterRegistry;
+
+    public SseConcurrencyGuard(MeterRegistry meterRegistry) {
+        this.meterRegistry = meterRegistry;
+    }
+
+    @PostConstruct
+    public void registerMetrics() {
+        // 暴露全局活跃 SSE 连接数给 Prometheus
+        Gauge.builder("sse.active.connections", this, SseConcurrencyGuard::totalActive)
+                .description("当前活跃 SSE 连接总数（按 IP 求和）")
+                .register(meterRegistry);
+    }
+
+    private double totalActive() {
+        int sum = 0;
+        for (AtomicInteger c : activeByIp.values()) {
+            sum += c.get();
+        }
+        return sum;
+    }
 
     /**
      * 尝试占位。true = 通过；false = 已达上限。

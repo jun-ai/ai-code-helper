@@ -1,0 +1,12 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'ai-code-helper'
+    metrics_path: '/api/actuator/prometheus'
+    # Spring Boot 服务跑在宿主机，Docker 容器通过 host.docker.internal 访问
+    static_configs:
+      - targets: ['host.docker.internal:8081']
+        labels:
+          application: ai-code-helper
