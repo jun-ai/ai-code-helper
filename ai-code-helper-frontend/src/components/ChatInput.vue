@@ -1,6 +1,33 @@
 <template>
   <div class="chat-input">
+    <div v-if="attachment" class="attachment-preview">
+      <img v-if="isImage" :src="previewUrl" class="thumb" :alt="attachment.name" />
+      <video v-else-if="isVideo" :src="previewUrl" class="thumb" muted />
+      <div v-else class="file-icon-thumb">
+        <span class="file-emoji">{{ fileEmoji }}</span>
+      </div>
+      <div class="attachment-meta">
+        <span class="attachment-name">{{ attachment.name }}</span>
+        <span class="attachment-size">{{ formattedSize }}</span>
+        <span v-if="uploadStatus" class="attachment-status">{{ uploadStatus }}</span>
+      </div>
+      <button class="remove-btn" @click="clearAttachment" title="移除附件">✕</button>
+    </div>
+
     <div class="input-container">
+      <button
+        class="attach-btn"
+        :disabled="disabled"
+        @click="openFilePicker"
+        title="附件（图片 / 视频 / 文档）"
+      >📎</button>
+      <input
+        ref="fileInputRef"
+        type="file"
+        class="file-input-hidden"
+        accept="image/*,video/*,.pdf,.docx,.txt,.md"
+        @change="onFileSelected"
+      />
       <textarea
         ref="inputRef"
         v-model="inputMessage"
@@ -12,7 +39,7 @@
         @input="adjustHeight"
       />
       <button
-        :disabled="disabled || !inputMessage.trim()"
+        :disabled="disabled || (!inputMessage.trim() && !attachment)"
         @click="sendMessage"
         class="send-button"
       >
@@ -39,16 +66,77 @@ export default {
   },
   data() {
     return {
-      inputMessage: ''
+      inputMessage: '',
+      attachment: null,
+      previewUrl: '',
+      uploadStatus: ''
+    }
+  },
+  computed: {
+    isImage() {
+      return this.attachment && this.attachment.type.startsWith('image/')
+    },
+    isVideo() {
+      return this.attachment && this.attachment.type.startsWith('video/')
+    },
+    fileEmoji() {
+      if (!this.attachment) return '📄'
+      const t = this.attachment.type
+      if (t.includes('pdf')) return '📕'
+      if (t.includes('word') || t.includes('document')) return '📘'
+      if (t.startsWith('video/')) return '🎬'
+      if (t.startsWith('image/')) return '🖼️'
+      if (t.includes('text') || t.includes('markdown')) return '📝'
+      return '📄'
+    },
+    formattedSize() {
+      if (!this.attachment) return ''
+      const kb = this.attachment.size / 1024
+      if (kb < 1024) return `${kb.toFixed(1)} KB`
+      return `${(kb / 1024).toFixed(2)} MB`
+    }
+  },
+  beforeUnmount() {
+    if (this.previewUrl) {
+      URL.revokeObjectURL(this.previewUrl)
     }
   },
   methods: {
-    sendMessage() {
-      if (this.inputMessage.trim() && !this.disabled) {
-        this.$emit('send-message', this.inputMessage.trim())
-        this.inputMessage = ''
-        this.adjustHeight()
+    openFilePicker() {
+      if (this.disabled) return
+      this.$refs.fileInputRef.click()
+    },
+    onFileSelected(event) {
+      const file = event.target.files && event.target.files[0]
+      if (!file) return
+      // 50MB 上限（与服务端对齐）
+      if (file.size > 50 * 1024 * 1024) {
+        alert('文件超过 50MB')
+        return
       }
+      this.attachment = file
+      if (this.previewUrl) URL.revokeObjectURL(this.previewUrl)
+      this.previewUrl = URL.createObjectURL(file)
+      this.uploadStatus = ''
+      // 允许重复选同一文件
+      event.target.value = ''
+    },
+    clearAttachment() {
+      if (this.previewUrl) URL.revokeObjectURL(this.previewUrl)
+      this.previewUrl = ''
+      this.attachment = null
+      this.uploadStatus = ''
+    },
+    sendMessage() {
+      const text = this.inputMessage.trim()
+      if ((!text && !this.attachment) || this.disabled) return
+      this.$emit('send-message', {
+        message: text,
+        attachment: this.attachment
+      })
+      this.inputMessage = ''
+      this.clearAttachment()
+      this.adjustHeight()
     },
     handleKeyDown(event) {
       if (event.key === 'Enter' && !event.shiftKey) {
@@ -65,6 +153,9 @@ export default {
     },
     focus() {
       this.$refs.inputRef.focus()
+    },
+    setUploadStatus(text) {
+      this.uploadStatus = text
     }
   },
   mounted() {
@@ -75,17 +166,119 @@ export default {
 
 <style scoped>
 .chat-input {
-  padding: 20px;
+  padding: 12px 20px 20px;
   background-color: white;
   border-top: 1px solid #e1e5e9;
+}
+
+.attachment-preview {
+  max-width: 800px;
+  margin: 0 auto 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background-color: #f1f3f4;
+  border-radius: 12px;
+  border: 1px solid #e1e5e9;
+}
+
+.attachment-preview .thumb {
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: #000;
+}
+
+.file-icon-thumb {
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  background-color: #fff;
+  border: 1px solid #e1e5e9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.file-emoji {
+  font-size: 28px;
+}
+
+.attachment-meta {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.attachment-name {
+  font-size: 13px;
+  color: #333;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-size {
+  font-size: 11px;
+  color: #888;
+}
+
+.attachment-status {
+  font-size: 11px;
+  color: #0d6efd;
+}
+
+.remove-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: none;
+  background: #fff;
+  color: #666;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.remove-btn:hover {
+  background: #e03131;
+  color: #fff;
 }
 
 .input-container {
   display: flex;
   align-items: flex-end;
-  gap: 12px;
+  gap: 8px;
   max-width: 800px;
   margin: 0 auto;
+}
+
+.attach-btn {
+  width: 44px;
+  height: 44px;
+  background-color: #f1f3f4;
+  border: none;
+  border-radius: 50%;
+  font-size: 20px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color 0.2s;
+}
+
+.attach-btn:hover:not(:disabled) {
+  background-color: #e2e6ea;
+}
+
+.attach-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.file-input-hidden {
+  display: none;
 }
 
 .input-textarea {
@@ -139,15 +332,15 @@ export default {
 
 @media (max-width: 768px) {
   .chat-input {
-    padding: 15px;
+    padding: 12px 15px 15px;
   }
-  
+
   .input-container {
-    gap: 8px;
+    gap: 6px;
   }
-  
+
   .input-textarea {
-    font-size: 16px; /* 防止在移动设备上自动缩放 */
+    font-size: 16px;
   }
 }
-</style> 
+</style>

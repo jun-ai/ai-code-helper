@@ -1,5 +1,9 @@
 ### CUSTOM ###
 application-local.yml
+rag-store.json
+milvus/volumes/
+*.log
+ai-code-helper-frontend/.env
 
 HELP.md
 target/

@@ -1,29 +1,13 @@
 # 🤖 AI 编程小助手 - LangChain4j 实战项目
 
-> 基于 LangChain4j + 通义千问的 AI 智能编程学习与求职辅导机器人
+> 基于 LangChain4j + 智谱 GLM + Milvus + MySQL 的 AI 编程学习与求职辅导机器人
 
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5.3-brightgreen.svg)](https://spring.io/projects/spring-boot)
 [![Vue.js](https://img.shields.io/badge/Vue.js-3.3.4-4FC08D.svg)](https://vuejs.org/)
 [![LangChain4j](https://img.shields.io/badge/LangChain4j-1.1.0-blue.svg)](https://github.com/langchain4j/langchain4j)
 [![Java](https://img.shields.io/badge/Java-21-orange.svg)](https://www.oracle.com/java/)
 
-
-
-大家好，我是程序员鱼皮。现在 AI 应用开发可以说是程序员必备的技能了，求职时能够大幅增加竞争力。之前我用 Spring AI 带大家做过一个 [开源的 AI 超级智能体项目](https://github.com/liyupi/yu-ai-agent)，这次我来带大家快速掌握另一个主流的 Java AI 应用开发框架 LangChain4j。
-
-这个教程项目也是我精心设计，拒绝枯燥的理论，而是用一个编程小助手项目带大家在实战中依次学习 LangChain4j 的主流用法。看完这个教程，你不仅学会了 LangChain4j，还直接多了一段项目经历，岂不美哉？
-
-项目视频教程：https://bilibili.com/video/BV1X4GGziEyr
-
-文字教程：https://mp.weixin.qq.com/s/7cNh7ndeiWiHBjnkTkz_Zg （在公众号程序员鱼皮的文章）
-
-更多鱼皮原创项目教程、编程学习路线可以在 [编程导航学习网](https://www.codefather.cn/) 获取。
-
-⭐ 如果这个项目对您有帮助，请给鱼皮一个 Star，这会激励我继续爆肝输出更多干货教程，万分感谢！ 
-
-![](https://pic.yupi.icu/1/AI%E7%BC%96%E7%A8%8B%E5%B0%8F%E5%8A%A9%E6%89%8B%E9%A1%B9%E7%9B%AE.png)
-
-本项目中，会话记忆、结构化输出、RAG、工具调用、MCP、护轨、可观测性、AI 代码生成等等，都有从 0 的讲解和实践。
+> 本仓库在原教程基础上做了生产化改造：通义千问切换为**智谱 GLM（免费 glm-4-flash）**，RAG 存储升级为 **Milvus 向量库**，会话记忆落 **MySQL**，并补充了**密钥管理、接口鉴权限流、SSE 心跳、引用来源、Micrometer 指标、单元测试**等工程化能力。
 
 
 ## ✨ 项目介绍
@@ -36,18 +20,33 @@
 ### 技术
 
 #### AI 服务
-- **LangChain4j集成**: 采用业界领先的AI应用开发框架
-- **通义千问模型**: 基于阿里云大模型，专业可靠
-- **流式响应**: 实时打字机效果，提升用户体验
+- **LangChain4j 集成**: 采用业界领先的 AI 应用开发框架
+- **智谱 GLM 对话模型**: 走 OpenAI 兼容端点，glm-4-flash 免费
+- **MiniMax embo-01 向量**: 1536 维 embedding，用于知识库检索
+- **流式响应**: SSE 实时打字机效果 + 心跳保活
+
+#### RAG 检索增强
+- **Milvus 向量库**: 知识切片持久化，重启不丢，首次启动自动灌库
+- **混合检索**: 向量召回 + 字面 bigram 重排，兼顾语义与专有名词
+- **双层缓存**: 检索结果 LRU 缓存 + embedding 向量缓存
+- **引用来源**: 回答末尾标注【来源：文件名 - 标题】，知识库无命中时明确声明
+
+#### 数据与记忆
+- **MySQL 会话记忆**: chat_memory 表持久化，多轮对话重启不丢
+- **窗口记忆**: 每会话保留最近 10 条，防 token 爆炸
 
 #### 安全机制
 - **输入安全防护**: 检测敏感内容，确保应用安全
+- **API Key 鉴权**: X-API-Key 请求头校验，未配置密钥则全部拒绝
+- **接口限流**: 每 API Key 每分钟 10 次，超限返回 429
+
+#### 可观测性
+- **Actuator**: /actuator/health、/metrics、/prometheus
+- **自定义指标**: 请求量、token 用量、检索延迟、embedding 缓存命中率、RAG 兜底次数
+- **embedding 重试**: 3 次指数退避，应对外部服务抖动
 
 #### 工具集成
-- **RAG检索增强**: 结合本地知识库，提供精准答案
-- **MCP协议支持**: 模型上下文协议，增强AI能力
-- **面试题搜索**: 实时抓取最新面试题目
-- **Web爬虫工具**: 获取实时技术资讯
+- **MCP 协议支持**: 模型上下文协议联网搜索
 
 
 
@@ -57,88 +56,141 @@
 
 - **Java**: JDK 21+
 - **Node.js**: 16.0+
-- **Maven**: 3.6+
-- **通义千问API**: 需申请API密钥
-- **Big Model API**: 需申请API密钥
+- **Maven**: 3.6+（国内建议自装并配置阿里云镜像；mvnw 需访问 Maven 中央仓库）
+- **Docker Desktop**: 运行 Milvus 向量库
+- **MySQL**: 8.0+（本机服务或容器均可）
+- **智谱 API**: [开放平台](https://open.bigmodel.cn/) 申请密钥（glm-4-flash 免费）
+- **MiniMax API**: [开放平台](https://platform.minimaxi.com/) 申请密钥（向量用）
 
 ### 启动步骤
 
-#### 1. 后端启动
+#### 1. 启动 Milvus（Docker）
+
 ```bash
-# 克隆项目
-git clone <repository-url>
-cd ai-code-helper
+cd milvus
+docker compose up -d
+# 等待健康检查通过
+curl http://localhost:9091/healthz   # 返回 OK 即就绪
+```
 
-# 配置API密钥
-# 编辑 src/main/resources/application.yml
-# 填入您的通义千问 API 和 Big Model API 密钥
+> 国内网络拉不动 quay.io 时，compose 已默认走 DaoCloud 镜像源；Docker Desktop 建议配置代理或镜像加速。
 
-# 启动后端服务
+#### 2. 准备 MySQL
+
+```sql
+CREATE DATABASE IF NOT EXISTS ai_code_helper DEFAULT CHARSET utf8mb4;
+```
+
+表结构由 `schema.sql` 在应用启动时自动创建，无需手动建表。
+
+#### 3. 配置密钥
+
+创建 `src/main/resources/application-local.yml`（已被 .gitignore 排除，不会提交）：
+
+```yaml
+zhipu:
+  api-key: 你的智谱密钥
+bigmodel:
+  api-key: 你的智谱密钥
+minimax:
+  api-key: 你的MiniMax密钥
+spring:
+  datasource:
+    password: 你的MySQL密码
+api:
+  security:
+    api-key: 自定义接口调用密钥
+```
+
+生产环境改用环境变量注入：`ZHIPU_API_KEY` / `MINIMAX_API_KEY` / `MYSQL_PASSWORD` / `APP_API_KEY`。
+
+#### 4. 启动后端
+
+```bash
 mvn spring-boot:run
 ```
 
-#### 2. 前端启动
+首次启动自动加载 `src/main/resources/docs` 下的知识文档、切片、向量化并写入 Milvus；再次启动检测到已有数据会跳过。
+
+#### 5. 启动前端
+
 ```bash
-# 进入前端目录
 cd ai-code-helper-frontend
-
-# 安装依赖
 npm install
-
-# 启动开发服务器
 npm run dev
 ```
 
-#### 3. 访问应用
+#### 6. 访问应用
 - 前端地址: `http://localhost:5173`
 - 后端API: `http://localhost:8081/api`
+- 健康检查: `http://localhost:8081/api/actuator/health`
+- 指标: `http://localhost:8081/api/actuator/metrics`
+
+> 所有 `/api/ai/**` 接口需携带请求头 `X-API-Key: 你配置的 api.security.api-key`。
 
 
 
 ## 技术架构
 
 ```
-┌─────────────────┐    ┌─────────────────┐
-│   Vue.js 前端    │────│  Spring Boot   │
-│   - 聊天界面     │    │    后端服务      │
-│   - 实时流式     │    │   - RESTful API │
-│   - Markdown    │    │   - SSE 推送     │
-└─────────────────┘    └─────────────────┘
-                              │
-                    ┌─────────────────┐
-                    │   LangChain4j   │
-                    │   - AI服务层    │
-                    │   - 工具集成    │
-                    │   - 安全防护    │
-                    └─────────────────┘
-                              │
-                    ┌─────────────────┐
-                    │   通义千问API    │
-                    │   - 对话模型    │
-                    │   - 嵌入模型    │
-                    │   - 流式输出    │
-                    └─────────────────┘
+┌─────────────────┐    ┌──────────────────────┐
+│   Vue.js 前端    │───▶│    Spring Boot 后端    │
+│   - 聊天界面     │SSE │  - ApiAuthFilter 鉴权  │
+│   - 实时流式     │    │  - 限流 + SSE 心跳     │
+└─────────────────┘    └──────────┬───────────┘
+                                  │
+                       ┌──────────▼───────────┐
+                       │      LangChain4j      │
+                       │  - AiServices 编排     │
+                       │  - RAG 混合检索+缓存   │
+                       │  - 会话记忆(窗口10条)   │
+                       │  - 工具调用 / MCP      │
+                       └───┬──────┬──────┬────┘
+                           │      │      │
+                 ┌─────────▼┐ ┌───▼────┐ ┌▼─────────────┐
+                 │ 智谱 GLM  │ │ MiniMax │ │ MySQL        │
+                 │ 对话/流式 │ │ 向量    │ │ chat_memory  │
+                 └──────────┘ └───┬────┘ └──────────────┘
+                                 │
+                        ┌────────▼────────┐
+                        │ Milvus 向量库    │
+                        │ (etcd + MiniO)  │
+                        └─────────────────┘
 ```
 
 
 
 ## 核心模块
 
-- `AiCodeHelperService`: 核心对话服务
-- `QwenChatModelConfig`: 模型配置管理
-- `RagConfig`: 检索增强配置
-- `McpConfig`: 模型上下文协议
-
-- `InterviewQuestionTool`: 面试题搜索
+- `AiCodeHelperService`: 核心对话服务（声明式 AI 接口）
+- `AiCodeHelperServiceFactory`: AiServices 编排（模型/记忆/RAG/工具装配）
+- `ZhipuModelConfig` / `MinimaxModelConfig`: 模型配置管理
+- `RagConfig`: 知识库灌库与 Milvus 接入（空库探测自动构建）
+- `HybridContentRetriever`: 向量召回 + bigram 重排混合检索
+- `CachingContentRetriever` / `CachingEmbeddingModel`: 双层缓存
+- `MysqlChatMemoryStore`: 会话记忆 MySQL 持久化
+- `McpConfig`: 模型上下文协议联网搜索
 - `SafeInputGuardrail`: 输入安全防护
-- `ChatModelListener`: 对话监听器
+- `ApiAuthFilter`: API Key 鉴权 + 固定窗口限流
+- `AppMetrics`: Micrometer 指标集中定义
+- `ChatModelListener`: 对话监听与 token 用量统计
 
+
+
+## 测试
+
+```bash
+mvn test
+```
+
+覆盖混合检索重排、缓存淘汰、鉴权限流、embedding 缓存等核心逻辑（25+ 个单测）；`AiCodeHelperServiceTest` 为真实调用 LLM 的集成验证，默认跳过，可在 IDEA 中手动执行。
 
 
 ## 致谢
 
-- [LangChain4j](https://github.com/langchain4j/langchain4j) - 强大的AI应用开发框架
-- [阿里云通义千问](https://dashscope.aliyun.com/) - 优秀的大语言模型
-- [Spring Boot](https://spring.io/projects/spring-boot) - 简化的Java开发框架
-- [Vue.js](https://vuejs.org/) - 渐进式JavaScript框架
-
+- [LangChain4j](https://github.com/langchain4j/langchain4j) - 强大的 AI 应用开发框架
+- [智谱 GLM](https://open.bigmodel.cn/) - 免费的国产大语言模型
+- [MiniMax](https://platform.minimaxi.com/) - 向量模型
+- [Milvus](https://milvus.io/) - 开源向量数据库
+- [Spring Boot](https://spring.io/projects/spring-boot) - 简化的 Java 开发框架
+- [Vue.js](https://vuejs.org/) - 渐进式 JavaScript 框架

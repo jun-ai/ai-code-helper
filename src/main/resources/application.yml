@@ -1,21 +1,83 @@
 spring:
   application:
     name: ai-code-helper
+  profiles:
+    # 未显式指定 profile 时加载 local（真实密钥在 application-local.yml，已 gitignore）
+    default: local
+  datasource:
+    url: jdbc:mysql://localhost:3306/ai_code_helper?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: root
+    password: ${MYSQL_PASSWORD:}
+  sql:
+    init:
+      mode: always
+milvus:
+  host: localhost
+  port: 19530
+  collection-name: ai_code_helper
 server:
   port: 8081
   servlet:
     context-path: /api
-langchain4j:
-  community:
-    dashscope:
-      chat-model:
-        model-name: qwen-max
-        api-key: <Your API Key>
-      streaming-chat-model:
-        model-name: qwen-max
-        api-key: <Your API Key>
-      embedding-model:
-        model-name: text-embedding-v4
-        api-key: <Your API Key>
+zhipu:
+  api-key: ${ZHIPU_API_KEY:}
+  # OpenAI 兼容端点
+  base-url: https://open.bigmodel.cn/api/paas/v4/
+  # 免费模型；充值后可换回 glm-4.6
+  chat-model: glm-4-flash
 bigmodel:
-  api-key: <Your API Key>
+  # MCP 联网搜索（按量计费；无余额时模型会收到搜索失败提示，不影响应用）
+  api-key: ${ZHIPU_API_KEY:}
+logging:
+  level:
+    # bigmodel.cn 空闲 60s 断连接，SSE 5s 默认读超时误判超时刷屏；调为 ERROR 只保留错误事件
+    dev.langchain4j.mcp.client.transport.http.SseEventListener: ERROR
+minimax:
+  api-key: ${MINIMAX_API_KEY:}
+  base-url: https://api.minimaxi.com/v1
+  embedding-model: embo-01
+api:
+  security:
+    enabled: true
+    # 调用方需携带 X-API-Key 请求头；生产用环境变量注入，未配置则全部拒绝
+    api-key: ${APP_API_KEY:}
+  rate-limit:
+    # 每 API Key 每分钟最大请求数
+    requests-per-minute: 10
+  sse:
+    max-concurrent-per-ip: 5
+rag:
+  # 向量召回 topK；越大 rerank 选择空间越大，embedding 调用也线性增加
+  vector-top-k: 20
+  # 向量召回最低 COSINE 分数，低于丢弃
+  vector-min-score: 0.5
+  # BM25 召回 topK
+  bm25-top-k: 20
+  # BM25 关键词召回开关（关掉即纯向量检索）
+  bm25-enabled: true
+  # Query 改写开关 + 变体数
+  query-rewrite-enabled: true
+  query-rewrite-variants: 3
+  # 重排序开关（关掉即按融合分直排）
+  rerank-enabled: true
+  rerank-min-candidates: 5
+  # 上下文压缩开关（关掉即原段直送主 LLM）
+  compress-enabled: true
+  compress-max-chars: 200
+  # 关键词权重（融合时），1 - keywordWeight 给向量
+  keyword-weight: 0.3
+  # 最终进入主 LLM 的段数
+  final-top-k: 5
+  # 综合分低于该值的段被丢弃
+  final-min-score: 0.35
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: ai-code-helper

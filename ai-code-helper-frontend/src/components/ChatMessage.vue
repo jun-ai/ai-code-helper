@@ -7,19 +7,80 @@
     </div>
     <div class="message-content">
       <div class="message-bubble">
-        <!-- 用户消息使用普通文本 -->
-        <pre v-if="isUser" class="message-text">{{ message }}</pre>
-        <!-- AI回复使用Markdown渲染 -->
-        <div v-else class="message-markdown" v-html="renderedMessage"></div>
+        <!-- 用户消息：附件缩略图 + 文本 -->
+        <template v-if="isUser">
+          <div v-if="attachment" class="user-attachment">
+            <a
+              v-if="attachment.remoteUrl || attachment.localUrl"
+              :href="attachment.remoteUrl || attachment.localUrl"
+              target="_blank"
+              rel="noopener"
+              class="attachment-thumb-link"
+            >
+              <img
+                v-if="isImageAttachment"
+                :src="attachment.remoteUrl || attachment.localUrl"
+                class="attachment-thumb"
+                :alt="attachment.name"
+              />
+              <video
+                v-else-if="isVideoAttachment"
+                :src="attachment.remoteUrl || attachment.localUrl"
+                class="attachment-thumb"
+                muted
+              />
+              <div v-else class="attachment-icon">
+                <span class="attachment-emoji">{{ attachmentEmoji }}</span>
+              </div>
+            </a>
+            <div v-else-if="isImageAttachment" class="attachment-thumb-placeholder">🖼️</div>
+            <div class="attachment-info">
+              <span class="attachment-name" :title="attachment.name">{{ attachment.name }}</span>
+              <span class="attachment-meta">
+                {{ formattedSize }}
+                <span v-if="attachment.indexed" class="indexed-tag">已入知识库</span>
+                <span v-else-if="attachment.remoteUrl" class="uploaded-tag">已上传</span>
+                <span v-else class="uploading-tag">上传中…</span>
+                <span v-if="attachment.uploadError" class="upload-error">{{ attachment.uploadError }}</span>
+              </span>
+            </div>
+          </div>
+          <pre v-if="message" class="message-text">{{ message }}</pre>
+        </template>
+        <!-- AI回复：拆分来源 + 内容；来源末尾渲染为 chip，避免与正文堆在一起 -->
+        <template v-else>
+          <div class="message-markdown" v-html="renderedContent"></div>
+          <div v-if="sources.length" class="source-chips">
+            <span
+              v-for="(src, idx) in sources"
+              :key="idx"
+              class="source-chip"
+              :title="src.file"
+            >
+              📄 {{ src.file }}
+              <span v-if="src.title" class="source-chip-title">· {{ src.title }}</span>
+            </span>
+          </div>
+        </template>
       </div>
-      <div class="message-time">{{ formatTime(timestamp) }}</div>
+      <div class="message-footer">
+        <div class="message-time">{{ formatTime(timestamp) }}</div>
+        <!-- AI 消息支持复制 + 失败重试 -->
+        <div v-if="!isUser && message" class="message-actions">
+          <button class="action-btn" @click="copyMessage" title="复制">📋</button>
+          <button v-if="status === 'error'" class="action-btn retry-btn" @click="$emit('retry')" title="重新生成">⟳</button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
 
 <script>
 import { formatTime } from '../utils/index.js'
-import { marked } from 'marked'
+import { renderMarkdown } from '../utils/markdown.js'
+
+// 匹配 "【来源：文件名 - 标题】" 或 "【来源：文件名】"；文件名/标题可含中文、字母、数字、点
+const SOURCE_PATTERN = /【来源：([^】]+?)】/g
 
 export default {
   name: 'ChatMessage',
@@ -35,28 +96,86 @@ export default {
     timestamp: {
       type: Date,
       default: () => new Date()
+    },
+    status: {
+      type: String,
+      default: 'done' // done / error / streaming
+    },
+    attachment: {
+      type: Object,
+      default: null
+      // { name, size, mimeType, localUrl, remoteUrl, indexed, chunks, uploadError }
     }
   },
+  emits: ['retry'],
   computed: {
-    renderedMessage() {
-      if (this.isUser) {
-        return this.message
-      }
-      // 配置marked选项
-      marked.setOptions({
-        breaks: true, // 支持换行
-        gfm: true, // 支持GitHub风格的Markdown
-        sanitize: false, // 不过滤HTML（根据需要可以开启）
-        highlight: function(code, lang) {
-          // 可以在这里添加代码高亮功能
-          return code
+    isImageAttachment() {
+      return this.attachment && this.attachment.mimeType && this.attachment.mimeType.startsWith('image/')
+    },
+    isVideoAttachment() {
+      return this.attachment && this.attachment.mimeType && this.attachment.mimeType.startsWith('video/')
+    },
+    attachmentEmoji() {
+      if (!this.attachment) return '📄'
+      const t = this.attachment.mimeType || ''
+      if (t.includes('pdf')) return '📕'
+      if (t.includes('word') || t.includes('document')) return '📘'
+      if (t.startsWith('video/')) return '🎬'
+      if (t.startsWith('image/')) return '🖼️'
+      if (t.includes('text') || t.includes('markdown')) return '📝'
+      return '📄'
+    },
+    formattedSize() {
+      if (!this.attachment || !this.attachment.size) return ''
+      const kb = this.attachment.size / 1024
+      if (kb < 1024) return `${kb.toFixed(1)} KB`
+      return `${(kb / 1024).toFixed(2)} MB`
+    },
+    sources() {
+      if (this.isUser) return []
+      const seen = new Set()
+      const result = []
+      let match
+      SOURCE_PATTERN.lastIndex = 0
+      while ((match = SOURCE_PATTERN.exec(this.message)) !== null) {
+        const raw = match[1].trim()
+        // 形如 "Java 编程学习路线.md - 学习建议" 或 "Java 编程学习路线.md"
+        const dashIdx = raw.indexOf(' - ')
+        const file = (dashIdx >= 0 ? raw.slice(0, dashIdx) : raw).trim()
+        const title = dashIdx >= 0 ? raw.slice(dashIdx + 3).trim() : ''
+        const key = `${file}::${title}`
+        if (!seen.has(key)) {
+          seen.add(key)
+          result.push({ file, title })
         }
-      })
-      return marked(this.message)
+      }
+      return result
+    },
+    contentWithoutSources() {
+      if (this.isUser) return this.message
+      // 把【来源：xxx】及其之间的空白从正文里剔除
+      return this.message.replace(SOURCE_PATTERN, '').replace(/(\n\s*){2,}$/g, '').trim()
+    },
+    renderedContent() {
+      if (this.isUser) return ''
+      return renderMarkdown(this.contentWithoutSources)
     }
   },
   methods: {
-    formatTime
+    formatTime,
+    async copyMessage() {
+      try {
+        await navigator.clipboard.writeText(this.message)
+      } catch (e) {
+        // 降级用 textarea + execCommand
+        const ta = document.createElement('textarea')
+        ta.value = this.message
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
+      }
+    }
   }
 }
 </script>
@@ -291,13 +410,183 @@ export default {
   text-align: left;
 }
 
+.message-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 0 4px;
+}
+
+.user-message .message-footer {
+  justify-content: flex-end;
+}
+
+.message-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.chat-message:hover .message-actions {
+  opacity: 1;
+}
+
+.action-btn {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 2px 6px;
+  cursor: pointer;
+  font-size: 14px;
+  color: #888;
+  transition: all 0.15s;
+}
+
+.action-btn:hover {
+  background-color: rgba(0, 0, 0, 0.05);
+  color: #333;
+}
+
+.action-btn.retry-btn {
+  color: #d33;
+}
+
+.source-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(0, 0, 0, 0.08);
+}
+
+.source-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  font-size: 12px;
+  background-color: rgba(108, 117, 125, 0.1);
+  color: #495057;
+  border-radius: 11px;
+  border: 1px solid rgba(108, 117, 125, 0.2);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-chip-title {
+  color: #6c757d;
+  margin-left: 4px;
+}
+
 @media (max-width: 768px) {
   .message-content {
     max-width: 85%;
   }
-  
+
   .chat-message {
     padding: 0 10px;
   }
+}
+
+.user-attachment {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.25);
+}
+
+.attachment-thumb-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.attachment-thumb {
+  width: 64px;
+  height: 64px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.attachment-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.attachment-emoji {
+  font-size: 32px;
+}
+
+.attachment-thumb-placeholder {
+  width: 64px;
+  height: 64px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  flex-shrink: 0;
+}
+
+.attachment-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.attachment-name {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.95);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.attachment-meta {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 2px;
+}
+
+.indexed-tag,
+.uploaded-tag {
+  background: rgba(40, 167, 69, 0.25);
+  color: #d4edda;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 10px;
+}
+
+.uploading-tag {
+  background: rgba(255, 193, 7, 0.25);
+  color: #fff3cd;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 10px;
+}
+
+.upload-error {
+  color: #ffcccc;
+  font-size: 10px;
 }
 </style> 
