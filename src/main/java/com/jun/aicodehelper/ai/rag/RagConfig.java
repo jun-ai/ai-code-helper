@@ -172,7 +172,7 @@ public class RagConfig {
         }
     }
 
-    private List<Document> loadDocx(Path path) throws Exception {
+    private List<Document> loadDocx(Path path) throws IOException {
         try (InputStream in = Files.newInputStream(path);
              XWPFDocument doc = new XWPFDocument(in)) {
             StringBuilder sb = new StringBuilder();

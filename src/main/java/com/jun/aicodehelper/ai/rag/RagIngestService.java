@@ -185,7 +185,7 @@ public class RagIngestService {
         return sb.toString();
     }
 
-    private String extractDocx(Path path) throws Exception {
+    private String extractDocx(Path path) throws IOException {
         try (InputStream in = Files.newInputStream(path);
              XWPFDocument doc = new XWPFDocument(in)) {
             StringBuilder sb = new StringBuilder();
