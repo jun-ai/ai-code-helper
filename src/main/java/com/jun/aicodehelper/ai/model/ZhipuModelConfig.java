@@ -70,4 +70,16 @@ public class ZhipuModelConfig {
                 .listeners(List.of(chatModelListener))
                 .build();
     }
+
+    @Bean
+    public ChatModel zhipuVisionChatModel() {
+        // 同步视觉模型：图片入库 caption 用，要求一次性返回
+        return OpenAiChatModel.builder()
+                .baseUrl(baseUrl)
+                .apiKey(apiKey)
+                .modelName(visionModel)
+                .timeout(Duration.ofSeconds(60))
+                .listeners(List.of(chatModelListener))
+                .build();
+    }
 }

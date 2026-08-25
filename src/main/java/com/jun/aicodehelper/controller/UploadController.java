@@ -15,7 +15,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
@@ -23,7 +23,7 @@ import java.util.UUID;
 
 /**
  * 文件上传：PDF / Word / TXT / MD / 图片 / 视频。
- * 文档类自动入 RAG 库；图片 / 视频只返回 URL，由后续 chat 接口拼到多模态消息里。
+ * 文档类自动入 RAG 库；图片 caption 入库；视频只返回 URL（抽帧 + 多图问答另走 chat 流程）。
  */
 @Slf4j
 @RestController
@@ -34,6 +34,9 @@ public class UploadController {
 
     // 可入 RAG 的文本类扩展名
     private static final Set<String> INDEXABLE = Set.of(".pdf", ".docx", ".txt", ".md");
+
+    // 图片类：调视觉模型生成 caption 再入 RAG
+    private static final Set<String> IMAGE_EXTS = Set.of(".png", ".jpg", ".jpeg", ".webp", ".gif");
 
     @Value("${app.upload.dir:uploads}")
     private String uploadDir;
@@ -59,9 +62,14 @@ public class UploadController {
             Files.createDirectories(dir);
             String savedName = UUID.randomUUID() + ext;
             Path target = dir.resolve(savedName);
+            byte[] bytes;
             try (var in = file.getInputStream()) {
-                Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
+                bytes = in.readAllBytes();
             }
+            Files.write(target, bytes,
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.TRUNCATE_EXISTING,
+                    StandardOpenOption.WRITE);
 
             Map<String, Object> result = new HashMap<>();
             result.put("url", "/api/uploads/" + savedName);
@@ -81,9 +89,21 @@ public class UploadController {
                     result.put("indexed", false);
                     result.put("indexError", e.getMessage());
                 }
+            } else if (IMAGE_EXTS.contains(ext)) {
+                // 图片：调 GLM-4V 生成 caption 入 RAG
+                try {
+                    int chunks = ragIngestService.ingestImage(bytes, file.getContentType(), originalName, savedName);
+                    result.put("indexed", true);
+                    result.put("chunks", chunks);
+                    result.put("type", "image");
+                } catch (Exception e) {
+                    log.warn("图片入库失败但已落盘: {} err={}", originalName, e.getMessage());
+                    result.put("indexed", false);
+                    result.put("indexError", e.getMessage());
+                }
             } else {
                 result.put("indexed", false);
-                result.put("reason", "非文本类型，不入 RAG 库");
+                result.put("reason", "非文本/图片类型，不入 RAG 库");
             }
 
             log.info("上传成功: {} size={} ext={} indexed={}",

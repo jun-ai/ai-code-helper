@@ -1,5 +1,6 @@
 package com.jun.aicodehelper.ai.rag;
 
+import com.jun.aicodehelper.ai.multimodal.ImageCaptionService;
 import dev.langchain4j.data.document.Document;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
@@ -42,6 +43,9 @@ public class RagIngestService {
     @Resource
     private RagProperties ragProperties;
 
+    @Resource
+    private ImageCaptionService imageCaptionService;
+
     /**
      * 读取文件 → 提取文本 → 切段 → embedding → 写入 Milvus
      * @param tempFile 已落盘的临时文件
@@ -82,6 +86,36 @@ public class RagIngestService {
         } catch (Exception e) {
             throw new RuntimeException("文件入库失败: " + originalName + " - " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * 图片入库：调视觉模型生成 caption，把 caption 当作文本写进 RAG 库。
+     * metadata 含 type=image + image_path，前端可识别渲染缩略图。
+     *
+     * @return 入库切片数（一般 1）
+     */
+    public int ingestImage(byte[] imageBytes, String mimeType, String originalName, String savedAs) {
+        String caption = imageCaptionService.caption(imageBytes, mimeType);
+        String body = (caption != null && !caption.isBlank())
+                ? "图片描述：" + caption
+                : "图片（" + originalName + "）";
+        Document document = Document.from(body);
+        document.metadata().put("file_name", originalName);
+        document.metadata().put("type", "image");
+        document.metadata().put("image_path", savedAs);
+        List<TextSegment> segments = textSplitter.split(document);
+        if (segments.isEmpty()) {
+            segments = List.of(TextSegment.from(body));
+        }
+        List<Embedding> embeddings = minimaxEmbeddingModel.embedAll(segments).content();
+        embeddingStore.addAll(embeddings, segments);
+        if (ragProperties.isBm25Enabled()) {
+            for (TextSegment seg : segments) {
+                bm25Index.add(seg);
+            }
+        }
+        log.info("RAG 图片入库: file={} caption-len={} 切片={}", originalName, body.length(), segments.size());
+        return segments.size();
     }
 
     private String extractPdf(Path path) throws IOException {
