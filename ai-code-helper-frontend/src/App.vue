@@ -1,5 +1,6 @@
 <template>
   <n-config-provider :theme="null">
+    <n-dialog-provider>
     <n-message-provider>
       <n-notification-provider>
         <div class="app-shell" :data-theme="theme">
@@ -167,13 +168,14 @@
         </div>
       </n-notification-provider>
     </n-message-provider>
+    </n-dialog-provider>
   </n-config-provider>
 </template>
 
 <script>
 import { computed, ref, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import {
-  NConfigProvider, NMessageProvider, NNotificationProvider, NIcon
+  NConfigProvider, NDialogProvider, NMessageProvider, NNotificationProvider, NIcon
 } from 'naive-ui'
 import {
   AddOutline, ChatbubblesOutline, TrashOutline,
@@ -192,7 +194,7 @@ import { attachCodeCopyButtons } from './utils/markdown.js'
 export default {
   name: 'App',
   components: {
-    NConfigProvider, NMessageProvider, NNotificationProvider, NIcon,
+    NConfigProvider, NDialogProvider, NMessageProvider, NNotificationProvider, NIcon,
     AddOutline, ChatbubblesOutline, TrashOutline,
     SunnyOutline, MoonOutline, SettingsOutline, SparklesOutline,
     ChatMessage, ChatInput, SettingsDrawer, KnowledgeBaseDrawer

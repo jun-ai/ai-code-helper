@@ -1,6 +1,6 @@
 <template>
   <n-drawer :show="show" @update:show="(v) => emit('update:show', v)" :width="380" placement="right">
-    <n-drawer-content title="设置" closable>
+    <n-drawer-content title="设置" closable @close="emit('update:show', false)">
       <n-form label-placement="top" size="small">
         <n-form-item label="API Key">
           <n-input

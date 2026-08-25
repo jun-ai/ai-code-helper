@@ -5,7 +5,7 @@
     :width="520"
     placement="right"
   >
-    <n-drawer-content title="📚 知识库管理" closable>
+    <n-drawer-content title="📚 知识库管理" closable @close="emit('update:show', false)">
       <div class="kb-toolbar">
         <n-space>
           <n-button type="primary" size="small" :loading="loading" @click="refresh">
@@ -182,7 +182,7 @@ export default {
         })
     }
 
-    watch(() => show, (v) => {
+    watch(() => props.show, (v) => {
         if (v) {
             lastResult.value = null
             refresh()
