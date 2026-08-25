@@ -1,0 +1,90 @@
+/* 设计 token：颜色 / 间距 / 圆角 / 字号 / 阴影 */
+:root,
+[data-theme="light"] {
+  --color-bg: #f7f8fa;
+  --color-bg-elev: #ffffff;
+  --color-bg-sidebar: #fafbfc;
+  --color-bg-hover: #f1f3f5;
+  --color-text: #1f2328;
+  --color-text-muted: #6b7280;
+  --color-text-faint: #9ca3af;
+  --color-border: #e5e7eb;
+  --color-accent: #2563eb;
+  --color-accent-hover: #1d4ed8;
+  --color-accent-soft: #dbeafe;
+  --color-success: #10b981;
+  --color-warn: #f59e0b;
+  --color-error: #ef4444;
+  --color-user-bubble: #2563eb;
+  --color-user-bubble-text: #ffffff;
+  --color-ai-bubble: #f1f3f5;
+  --color-ai-bubble-text: #1f2328;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  --font-xs: 12px;
+  --font-sm: 13px;
+  --font-md: 14px;
+  --font-lg: 16px;
+  --font-xl: 20px;
+  --font-2xl: 24px;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.08);
+
+  --sidebar-width: 260px;
+  --sidebar-collapsed: 56px;
+}
+
+[data-theme="dark"] {
+  --color-bg: #0f1115;
+  --color-bg-elev: #1a1d23;
+  --color-bg-sidebar: #14171c;
+  --color-bg-hover: #23272e;
+  --color-text: #e5e7eb;
+  --color-text-muted: #9ca3af;
+  --color-text-faint: #6b7280;
+  --color-border: #2a2f38;
+  --color-accent: #3b82f6;
+  --color-accent-hover: #60a5fa;
+  --color-accent-soft: #1e3a8a;
+  --color-user-bubble: #3b82f6;
+  --color-user-bubble-text: #ffffff;
+  --color-ai-bubble: #23272e;
+  --color-ai-bubble-text: #e5e7eb;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #app {
+  height: 100%;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-text);
+  transition: background-color 0.2s, color 0.2s;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 滚动条全局 token 化 */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: var(--radius-pill); }
+::-webkit-scrollbar-thumb:hover { background: var(--color-text-faint); }
