@@ -1,5 +1,6 @@
 package com.jun.aicodehelper.controller;
 
+import com.jun.aicodehelper.ai.multimodal.VideoFrameExtractor;
 import com.jun.aicodehelper.ai.rag.RagIngestService;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
@@ -16,14 +17,16 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
 /**
  * 文件上传：PDF / Word / TXT / MD / 图片 / 视频。
- * 文档类自动入 RAG 库；图片 caption 入库；视频只返回 URL（抽帧 + 多图问答另走 chat 流程）。
+ * 文档类自动入 RAG 库；图片 caption 入库；视频上传时同步抽帧返回帧路径。
  */
 @Slf4j
 @RestController
@@ -38,11 +41,17 @@ public class UploadController {
     // 图片类：调视觉模型生成 caption 再入 RAG
     private static final Set<String> IMAGE_EXTS = Set.of(".png", ".jpg", ".jpeg", ".webp", ".gif");
 
+    // 视频类：上传后抽帧返回，多图视觉问答由 chat 接口拼装
+    private static final Set<String> VIDEO_EXTS = Set.of(".mp4", ".mov", ".mkv", ".avi", ".webm", ".flv");
+
     @Value("${app.upload.dir:uploads}")
     private String uploadDir;
 
     @Resource
     private RagIngestService ragIngestService;
+
+    @Resource
+    private VideoFrameExtractor videoFrameExtractor;
 
     @PostMapping
     public ResponseEntity<Map<String, Object>> upload(@RequestParam("file") MultipartFile file) {
@@ -101,9 +110,33 @@ public class UploadController {
                     result.put("indexed", false);
                     result.put("indexError", e.getMessage());
                 }
+            } else if (VIDEO_EXTS.contains(ext)) {
+                // 视频：抽帧到 uploads/<savedName-stem>_frames/，返回帧 URL 列表
+                if (!videoFrameExtractor.isAvailable()) {
+                    result.put("indexed", false);
+                    result.put("frames", List.of());
+                    result.put("frameWarning", "系统未安装 ffmpeg，无法抽帧；请先安装 ffmpeg");
+                } else {
+                    try {
+                        String stem = savedName.substring(0, savedName.lastIndexOf('.'));
+                        Path frameDir = dir.resolve(stem + "_frames");
+                        List<Path> frames = videoFrameExtractor.extract(target, frameDir);
+                        List<String> frameUrls = new ArrayList<>();
+                        for (Path f : frames) {
+                            frameUrls.add("/api/uploads/" + stem + "_frames/" + f.getFileName().toString());
+                        }
+                        result.put("frames", frameUrls);
+                        result.put("frameCount", frames.size());
+                        result.put("type", "video");
+                    } catch (Exception e) {
+                        log.warn("视频抽帧失败但已落盘: {} err={}", originalName, e.getMessage());
+                        result.put("frames", List.of());
+                        result.put("frameError", e.getMessage());
+                    }
+                }
             } else {
                 result.put("indexed", false);
-                result.put("reason", "非文本/图片类型，不入 RAG 库");
+                result.put("reason", "非文本/图片/视频类型，不入 RAG 库");
             }
 
             log.info("上传成功: {} size={} ext={} indexed={}",

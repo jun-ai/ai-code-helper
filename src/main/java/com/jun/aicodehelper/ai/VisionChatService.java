@@ -14,11 +14,12 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 
 /**
- * 视觉问答：图片（base64）+ 文本 → 流式回答。
+ * 视觉问答：图片（base64）+ 文本 → 流式回答。支持单图 / 多图（视频抽帧）。
  * 视觉模型独立于普通 ChatModel，避免主路径被图片拉低响应速度。
  */
 @Slf4j
@@ -31,25 +32,38 @@ public class VisionChatService {
     /**
      * 单轮视觉问答：直接把用户上传的图片拼到消息里交给视觉模型。
      * 不参与会话记忆，避免上下文被图片文本挤爆。
-     *
-     * @param text       用户附带的文字问题（可空，默认 "请描述这张图片"）
-     * @param imageBytes 图片二进制
-     * @param mimeType   image/jpeg / image/png / image/webp
      */
     public Flux<String> stream(String text, byte[] imageBytes, String mimeType) {
         if (imageBytes == null || imageBytes.length == 0) {
             return Flux.error(new IllegalArgumentException("图片为空"));
         }
-        String question = (text == null || text.isBlank()) ? "请描述这张图片的内容" : text;
-        String base64 = Base64.getEncoder().encodeToString(imageBytes);
-        ImageContent imageContent = ImageContent.from(base64, mimeType == null ? "image/jpeg" : mimeType);
-        TextContent textContent = TextContent.from(question);
-        UserMessage userMessage = UserMessage.from(List.of(textContent, imageContent));
-        log.info("视觉问答: text-len={} image-bytes={} mime={}", question.length(), imageBytes.length, mimeType);
+        return stream(text, List.of(imageBytes), mimeType);
+    }
+
+    /**
+     * 多图视觉问答：把多张图片依次追加到同一条 UserMessage 里。
+     * 视频抽帧后通常 8-12 张；GLM-4V 能接受多图上下文。
+     */
+    public Flux<String> stream(String text, List<byte[]> imageBytesList, String mimeType) {
+        if (imageBytesList == null || imageBytesList.isEmpty()) {
+            return Flux.error(new IllegalArgumentException("图片为空"));
+        }
+        String question = (text == null || text.isBlank()) ? "请描述这些图片的内容" : text;
+        String effectiveMime = mimeType == null ? "image/jpeg" : mimeType;
+        List<dev.langchain4j.data.message.Content> parts = new ArrayList<>();
+        parts.add(TextContent.from(question));
+        for (byte[] bytes : imageBytesList) {
+            if (bytes == null || bytes.length == 0) continue;
+            parts.add(ImageContent.from(Base64.getEncoder().encodeToString(bytes), effectiveMime));
+        }
+        if (parts.size() == 1) {
+            return Flux.error(new IllegalArgumentException("所有图片均为空"));
+        }
+        UserMessage userMessage = UserMessage.from(parts);
+        log.info("视觉问答: text-len={} frames={} mime={}", question.length(), imageBytesList.size(), effectiveMime);
         ChatRequest request = ChatRequest.builder()
                 .messages(List.of(userMessage))
                 .build();
-        // StreamingChatModel 是回调式 API，包一层 Flux.create 暴露成流
         return Flux.create((FluxSink<String> sink) -> {
             zhipuVisionStreamingChatModel.chat(request, new StreamingChatResponseHandler() {
                 @Override
@@ -62,9 +76,9 @@ public class VisionChatService {
                 @Override
                 public void onCompleteResponse(ChatResponse completeResponse) {
                     AiMessage ai = completeResponse == null ? null : completeResponse.aiMessage();
+                    // 兼容 provider 不回调 onPartialResponse 的情况
                     if (ai != null && ai.text() != null && !ai.text().isEmpty() && !sink.isCancelled()) {
-                        // 兼容 provider 不回调 onPartialResponse 的情况
-                        // (注：上面 onPartialResponse 通常已逐 token 推送过，这里仅兜底)
+                        // 通常已在 onPartialResponse 逐 token 推送，这里不重复发送
                     }
                     sink.complete();
                 }
