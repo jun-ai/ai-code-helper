@@ -1,7 +1,14 @@
 import axios from 'axios'
+import { safeGetJSON, KEY } from '../composables/storage.js'
+import { requestPresignUpload, putToPresignedUrl, notifyUploadFinished } from './ossApi.js'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8081/api'
-const API_KEY = import.meta.env.VITE_API_KEY || ''
+
+// fetch 不能走 axios interceptor；SSE / 健康检查这种需手动注入
+function apiKeyHeader() {
+    const s = safeGetJSON(KEY.SETTINGS, {}) || {}
+    return s.apiKey ? { 'X-API-Key': s.apiKey } : {}
+}
 
 // 网络/5xx 时的最大重试次数
 const MAX_RETRIES = 3
@@ -72,7 +79,7 @@ function sseStream(url, init, onMessage, onError, onClose, onRetry) {
                     ...init,
                     headers: {
                         Accept: 'text/event-stream',
-                        ...(API_KEY ? { 'X-API-Key': API_KEY } : {}),
+                        ...apiKeyHeader(),
                     },
                     signal: controller.signal,
                 })
@@ -203,7 +210,7 @@ export async function checkServiceHealth() {
     try {
         const response = await axios.get(`${API_BASE_URL}/health`, {
             timeout: 5000,
-            ...(API_KEY ? { headers: { 'X-API-Key': API_KEY } } : {}),
+            ...(true ? { headers: apiKeyHeader() } : {}),
         })
         return response.status === 200
     } catch (error) {
@@ -213,18 +220,22 @@ export async function checkServiceHealth() {
 }
 
 /**
- * 上传文件（图片 / 视频 / 文档），由 UploadController 处理
- * @returns {Promise<{url, fileName, size, mimeType, indexed, chunks?}>}
+ * 上传文件（图片 / 视频 / 文档）：OSS 签名直传链路
+ *   presign → PUT 到 OSS → 通知后端 finish 触发 ingestion
+ * @returns {Promise<{url, fileName, size, mimeType, indexed, chunks?, summary?, frames?, frameCount?}>}
  */
 export async function uploadFile(file) {
-    const form = new FormData()
-    form.append('file', file)
-    const response = await axios.post(`${API_BASE_URL}/upload`, form, {
-        headers: {
-            'Content-Type': 'multipart/form-data',
-            ...(API_KEY ? { 'X-API-Key': API_KEY } : {}),
-        },
-        timeout: 60_000,
+    const contentType = file.type || 'application/octet-stream'
+    const presign = await requestPresignUpload({
+        fileName: file.name,
+        size: file.size,
+        contentType,
     })
-    return response.data
+    await putToPresignedUrl(presign.uploadUrl, file, contentType)
+    return notifyUploadFinished({
+        key: presign.key,
+        fileName: file.name,
+        size: file.size,
+        mimeType: contentType,
+    })
 }

@@ -69,8 +69,17 @@ public class RagIngestService {
      * @return 入库切片数
      */
     public int ingestFile(Path tempFile, String originalName) {
+        try (InputStream in = Files.newInputStream(tempFile)) {
+            return ingestFile(in, originalName);
+        } catch (IOException e) {
+            throw new RuntimeException("文件入库失败: " + originalName + " - " + e.getMessage(), e);
+        }
+    }
+
+    /** InputStream 版：从 OSS 拉流直接入库，避免本地落盘 */
+    public int ingestFile(InputStream in, String originalName) {
         try {
-            String text = extractText(tempFile, originalName);
+            String text = extractText(in, originalName);
             if (text == null || text.isBlank()) {
                 log.warn("文件无可提取文本，跳过入库: {}", originalName);
                 return 0;
@@ -99,13 +108,20 @@ public class RagIngestService {
      * 扫描版 PDF 自动 fallback GLM-4V OCR。
      */
     public String extractText(Path tempFile, String originalName) throws IOException {
+        try (InputStream in = Files.newInputStream(tempFile)) {
+            return extractText(in, originalName);
+        }
+    }
+
+    /** InputStream 版：用于从 OSS / 网络流直接抽取文本 */
+    public String extractText(InputStream in, String originalName) throws IOException {
         String lower = originalName.toLowerCase();
         if (lower.endsWith(".pdf")) {
-            return extractPdf(tempFile);
+            return extractPdf(in);
         } else if (lower.endsWith(".docx")) {
-            return extractDocx(tempFile);
+            return extractDocx(in);
         } else if (lower.endsWith(".txt") || lower.endsWith(".md")) {
-            return Files.readString(tempFile);
+            return new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
         }
         throw new IllegalArgumentException("不支持的文件类型: " + originalName);
     }
@@ -140,12 +156,13 @@ public class RagIngestService {
         return segments.size();
     }
 
-    private String extractPdf(Path path) throws IOException {
-        try (PDDocument pdf = Loader.loadPDF(path.toFile())) {
+    private String extractPdf(InputStream in) throws IOException {
+        byte[] bytes = in.readAllBytes();
+        try (PDDocument pdf = Loader.loadPDF(bytes)) {
             String text = new PDFTextStripper().getText(pdf);
             // 扫描版 PDF：PDFBox 抽不到文本，回退 GLM-4V 多页 OCR
             if (text == null || text.isBlank()) {
-                log.info("PDF 文本为空，转 OCR: {}", path.getFileName());
+                log.info("PDF 文本为空，转 OCR（流式 {} bytes）", bytes.length);
                 return ocrPdfPages(pdf);
             }
             return text;
@@ -185,9 +202,8 @@ public class RagIngestService {
         return sb.toString();
     }
 
-    private String extractDocx(Path path) throws IOException {
-        try (InputStream in = Files.newInputStream(path);
-             XWPFDocument doc = new XWPFDocument(in)) {
+    private String extractDocx(InputStream in) throws IOException {
+        try (XWPFDocument doc = new XWPFDocument(in)) {
             StringBuilder sb = new StringBuilder();
             for (XWPFParagraph p : doc.getParagraphs()) {
                 sb.append(p.getText()).append('\n');

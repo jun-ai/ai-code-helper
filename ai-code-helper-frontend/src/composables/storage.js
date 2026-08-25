@@ -58,5 +58,6 @@ export const KEY = {
   MESSAGES: (sid) => `${KEY_PREFIX}messages:${sid}`,
   MEMORY_LEGACY: `${KEY_PREFIX}memoryId`,
   SETTINGS: `${KEY_PREFIX}settings`,
-  THEME: `${KEY_PREFIX}theme`
+  THEME: `${KEY_PREFIX}theme`,
+  ADMIN_KEY: `${KEY_PREFIX}adminKey`
 }

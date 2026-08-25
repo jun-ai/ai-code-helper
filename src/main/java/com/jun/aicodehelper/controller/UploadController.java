@@ -3,21 +3,26 @@ package com.jun.aicodehelper.controller;
 import com.jun.aicodehelper.ai.multimodal.DocSummaryService;
 import com.jun.aicodehelper.ai.multimodal.VideoFrameExtractor;
 import com.jun.aicodehelper.ai.rag.RagIngestService;
+import com.jun.aicodehelper.oss.OssProperties;
+import com.jun.aicodehelper.oss.OssService;
 import jakarta.annotation.Resource;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.multipart.MultipartFile;
 
-import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.StandardOpenOption;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -26,27 +31,31 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * 文件上传：PDF / Word / TXT / MD / 图片 / 视频。
- * 文档类自动入 RAG 库 + 返回 summary；图片 caption 入库；视频上传时同步抽帧返回帧路径。
+ * OSS 签名直传链路：
+ *   1) POST /api/upload/presign?fileName=&size=&contentType= → {uploadUrl, key, publicUrl}
+ *   2) 前端 PUT 文件到 uploadUrl
+ *   3) POST /api/upload/finish body={key, fileName, size, mimeType} → 触发 ingestion，返回兼容旧 res 字段
+ *
+ * 文档类走私有 uploads/ 前缀（需签名 GET），图片/视频帧走 public/ 前缀（直接公网 URL）。
  */
 @Slf4j
 @RestController
 @RequestMapping("/upload")
 public class UploadController {
 
-    private static final long MAX_FILE_SIZE = 50 * 1024L * 1024L; // 50MB
+    private static final long MAX_FILE_SIZE = 50 * 1024L * 1024L;
 
-    // 可入 RAG 的文本类扩展名
     private static final Set<String> INDEXABLE = Set.of(".pdf", ".docx", ".txt", ".md");
-
-    // 图片类：调视觉模型生成 caption 再入 RAG
     private static final Set<String> IMAGE_EXTS = Set.of(".png", ".jpg", ".jpeg", ".webp", ".gif");
-
-    // 视频类：上传后抽帧返回，多图视觉问答由 chat 接口拼装
     private static final Set<String> VIDEO_EXTS = Set.of(".mp4", ".mov", ".mkv", ".avi", ".webm", ".flv");
 
-    @Value("${app.upload.dir:uploads}")
-    private String uploadDir;
+    private static final DateTimeFormatter YM = DateTimeFormatter.ofPattern("yyyy/MM");
+
+    @Resource
+    private OssService ossService;
+
+    @Resource
+    private OssProperties ossProperties;
 
     @Resource
     private RagIngestService ragIngestService;
@@ -57,107 +66,182 @@ public class UploadController {
     @Resource
     private DocSummaryService docSummaryService;
 
-    @PostMapping
-    public ResponseEntity<Map<String, Object>> upload(@RequestParam("file") MultipartFile file) {
-        if (file == null || file.isEmpty()) {
-            return ResponseEntity.badRequest().body(error("文件为空"));
+    // ---------- 1. 签名 ----------
+
+    @PostMapping("/presign")
+    public ResponseEntity<Map<String, Object>> presign(
+            @RequestParam("fileName") String fileName,
+            @RequestParam("size") long size,
+            @RequestParam(value = "contentType", required = false) String contentType) {
+        if (fileName == null || fileName.isBlank()) {
+            return ResponseEntity.badRequest().body(error("fileName 不能为空"));
         }
-        if (file.getSize() > MAX_FILE_SIZE) {
-            return ResponseEntity.badRequest().body(error("文件过大，最大 50MB"));
+        if (size <= 0 || size > MAX_FILE_SIZE) {
+            return ResponseEntity.badRequest().body(error("文件大小非法（0 < size ≤ 50MB）"));
         }
-        String originalName = file.getOriginalFilename() == null ? "file" : file.getOriginalFilename();
-        String lower = originalName.toLowerCase();
-        String ext = lower.contains(".") ? lower.substring(lower.lastIndexOf('.')) : "";
+        String ext = extractExt(fileName);
+        String key = buildKey(ext, fileName, null);
+        OssService.PresignResult presign = ossService.presignPut(key, contentType);
+        Map<String, Object> body = new HashMap<>();
+        body.put("uploadUrl", presign.getUploadUrl());
+        body.put("key", presign.getKey());
+        body.put("publicUrl", presign.getPublicUrl());
+        body.put("expiresIn", presign.getExpiresIn());
+        return ResponseEntity.ok(body);
+    }
+
+    // ---------- 2. 完成通知 + ingestion ----------
+
+    @PostMapping("/finish")
+    public ResponseEntity<Map<String, Object>> finish(@RequestBody FinishRequest req) {
+        if (req == null || req.key == null || req.fileName == null) {
+            return ResponseEntity.badRequest().body(error("缺少 key 或 fileName"));
+        }
+        String originalName = req.fileName;
+        String ext = extractExt(originalName);
+        Map<String, Object> result = new HashMap<>();
+        result.put("fileName", originalName);
+        result.put("savedAs", req.key);
+        result.put("size", req.size);
+        result.put("mimeType", req.mimeType);
+        // 兼容旧字段：前端 useChat.js 只读 url / indexed / chunks / summary / frames
+        result.put("url", ossService.resolvePublicUrl(req.key));
 
         try {
-            // 落盘到独立 uploads 目录，避免污染 RAG 原始 docs/
-            Path dir = Paths.get(uploadDir).toAbsolutePath();
-            Files.createDirectories(dir);
-            String savedName = UUID.randomUUID() + ext;
-            Path target = dir.resolve(savedName);
-            byte[] bytes;
-            try (var in = file.getInputStream()) {
-                bytes = in.readAllBytes();
-            }
-            Files.write(target, bytes,
-                    StandardOpenOption.CREATE,
-                    StandardOpenOption.TRUNCATE_EXISTING,
-                    StandardOpenOption.WRITE);
-
-            Map<String, Object> result = new HashMap<>();
-            result.put("url", "/api/uploads/" + savedName);
-            result.put("fileName", originalName);
-            result.put("savedAs", savedName);
-            result.put("size", file.getSize());
-            result.put("mimeType", file.getContentType());
-
-            // 文本类自动入 RAG
             if (INDEXABLE.contains(ext)) {
-                String extractedText = null;
-                try {
-                    extractedText = ragIngestService.extractText(target, originalName);
-                    int chunks = ragIngestService.ingestFile(target, originalName);
-                    result.put("indexed", true);
-                    result.put("chunks", chunks);
-                } catch (Exception e) {
-                    log.warn("文件入库失败但已落盘: {} err={}", originalName, e.getMessage());
-                    result.put("indexed", false);
-                    result.put("indexError", e.getMessage());
-                }
-                // summary：从已抽到的文本做 ≤200 字摘要，前端用作 chip
-                if (extractedText != null && !extractedText.isBlank()) {
-                    String summary = docSummaryService.summarize(extractedText);
-                    if (summary != null) result.put("summary", summary);
-                }
+                ingestDocument(req.key, originalName, result);
             } else if (IMAGE_EXTS.contains(ext)) {
-                try {
-                    int chunks = ragIngestService.ingestImage(bytes, file.getContentType(), originalName, savedName);
-                    result.put("indexed", true);
-                    result.put("chunks", chunks);
-                    result.put("type", "image");
-                } catch (Exception e) {
-                    log.warn("图片入库失败但已落盘: {} err={}", originalName, e.getMessage());
-                    result.put("indexed", false);
-                    result.put("indexError", e.getMessage());
-                }
+                ingestImage(req.key, originalName, req.mimeType, result);
             } else if (VIDEO_EXTS.contains(ext)) {
-                if (!videoFrameExtractor.isAvailable()) {
-                    result.put("indexed", false);
-                    result.put("frames", List.of());
-                    result.put("frameWarning", "系统未安装 ffmpeg，无法抽帧；请先安装 ffmpeg");
-                } else {
-                    try {
-                        String stem = savedName.substring(0, savedName.lastIndexOf('.'));
-                        Path frameDir = dir.resolve(stem + "_frames");
-                        List<Path> frames = videoFrameExtractor.extract(target, frameDir);
-                        List<String> frameUrls = new ArrayList<>();
-                        for (Path f : frames) {
-                            frameUrls.add("/api/uploads/" + stem + "_frames/" + f.getFileName().toString());
-                        }
-                        result.put("frames", frameUrls);
-                        result.put("frameCount", frames.size());
-                        result.put("type", "video");
-                    } catch (Exception e) {
-                        log.warn("视频抽帧失败但已落盘: {} err={}", originalName, e.getMessage());
-                        result.put("frames", List.of());
-                        result.put("frameError", e.getMessage());
-                    }
-                }
+                ingestVideo(req.key, originalName, result);
             } else {
                 result.put("indexed", false);
                 result.put("reason", "非文本/图片/视频类型，不入 RAG 库");
             }
-
-            log.info("上传成功: {} size={} ext={} indexed={}",
-                    originalName, file.getSize(), ext, result.get("indexed"));
+            log.info("上传完成: {} key={} ext={} indexed={}",
+                    originalName, req.key, ext, result.get("indexed"));
             return ResponseEntity.ok(result);
-        } catch (IOException e) {
-            log.error("上传失败: {}", originalName, e);
-            return ResponseEntity.internalServerError().body(error("保存失败: " + e.getMessage()));
+        } catch (Exception e) {
+            log.error("上传 finish 失败: key={} file={}", req.key, originalName, e);
+            return ResponseEntity.internalServerError().body(error("处理失败: " + e.getMessage()));
         }
     }
 
-    private Map<String, Object> error(String msg) {
-        return Map.of("error", msg);
+    // ---------- ingestion 分支 ----------
+
+    private void ingestDocument(String key, String originalName, Map<String, Object> result) {
+        String text = null;
+        try (InputStream in = ossService.openStream(key)) {
+            text = ragIngestService.extractText(in, originalName);
+        } catch (Exception e) {
+            log.warn("文档 extractText 失败: key={} err={}", key, e.getMessage());
+        }
+        if (text != null && !text.isBlank()) {
+            try (InputStream in = ossService.openStream(key)) {
+                int chunks = ragIngestService.ingestFile(in, originalName);
+                result.put("indexed", true);
+                result.put("chunks", chunks);
+                String summary = docSummaryService.summarize(text);
+                if (summary != null) result.put("summary", summary);
+            } catch (Exception e) {
+                log.warn("文档 ingestFile 失败: key={} err={}", key, e.getMessage());
+                result.put("indexed", false);
+                result.put("indexError", e.getMessage());
+            }
+        } else {
+            result.put("indexed", false);
+            result.put("indexError", "文档无可抽取文本");
+        }
+    }
+
+    private void ingestImage(String key, String originalName, String mimeType, Map<String, Object> result) {
+        try {
+            byte[] bytes = ossService.downloadBytes(key);
+            int chunks = ragIngestService.ingestImage(bytes, mimeType, originalName, key);
+            result.put("indexed", true);
+            result.put("chunks", chunks);
+            result.put("type", "image");
+        } catch (Exception e) {
+            log.warn("图片入库失败: key={} err={}", key, e.getMessage());
+            result.put("indexed", false);
+            result.put("indexError", e.getMessage());
+        }
+    }
+
+    private void ingestVideo(String key, String originalName, Map<String, Object> result) {
+        String ext = extractExt(originalName);
+        Path tmp = null;
+        Path frameDir = null;
+        try {
+            tmp = ossService.downloadToTemp(key, ext.replace(".", ""));
+            if (!videoFrameExtractor.isAvailable()) {
+                result.put("indexed", false);
+                result.put("frames", List.of());
+                result.put("frameWarning", "系统未安装 ffmpeg，无法抽帧；请先安装 ffmpeg");
+                return;
+            }
+            String safeStem = key.hashCode() + "_" + UUID.randomUUID().toString().substring(0, 8);
+            frameDir = Paths.get(System.getProperty("java.io.tmpdir"), "ai-oss", safeStem + "_frames");
+            List<Path> frames = videoFrameExtractor.extract(tmp, frameDir);
+            List<String> frameUrls = new ArrayList<>();
+            for (Path f : frames) {
+                String frameKey = ossProperties.getPublicPrefix() + "/" + safeStem + "_frames/" + f.getFileName();
+                ossService.putFromFile(frameKey, f.toFile());
+                frameUrls.add(ossService.resolvePublicUrl(frameKey));
+            }
+            result.put("frames", frameUrls);
+            result.put("frameCount", frames.size());
+            result.put("type", "video");
+        } catch (Exception e) {
+            log.warn("视频抽帧失败: key={} err={}", key, e.getMessage());
+            result.put("frames", List.of());
+            result.put("frameError", e.getMessage());
+        } finally {
+            deleteQuietly(tmp);
+            deleteRecursively(frameDir);
+        }
+    }
+
+    // ---------- 工具 ----------
+
+    private Map<String, Object> error(String msg) { return Map.of("error", msg); }
+
+    private static String extractExt(String fileName) {
+        String lower = fileName.toLowerCase();
+        return lower.contains(".") ? lower.substring(lower.lastIndexOf('.')) : "";
+    }
+
+    /** 按扩展名决定 key 前缀：图片 → public/，其它 → uploads/ */
+    private String buildKey(String ext, String fileName, String fixedStem) {
+        String prefix = IMAGE_EXTS.contains(ext) ? ossProperties.getPublicPrefix() : ossProperties.getKeyPrefix();
+        String ym = LocalDate.now().format(YM);
+        String uuid = UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+        String nameExt = ext.isEmpty() ? "" : ext;
+        return prefix + "/" + ym + "/" + uuid + nameExt;
+    }
+
+    private static void deleteQuietly(Path p) {
+        if (p == null) return;
+        try { Files.deleteIfExists(p); } catch (Exception ignore) {}
+    }
+
+    private static void deleteRecursively(Path p) {
+        if (p == null || !Files.exists(p)) return;
+        try (var paths = Files.walk(p)) {
+            paths.sorted((a, b) -> b.getNameCount() - a.getNameCount())
+                 .forEach(child -> { try { Files.deleteIfExists(child); } catch (Exception ignore) {} });
+        } catch (Exception ignore) {}
+    }
+
+    // ---------- DTO ----------
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class FinishRequest {
+        private String key;
+        private String fileName;
+        private Long size;
+        private String mimeType;
     }
 }

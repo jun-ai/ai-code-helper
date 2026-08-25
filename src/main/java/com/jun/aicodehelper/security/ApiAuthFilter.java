@@ -120,28 +120,9 @@ public class ApiAuthFilter extends OncePerRequestFilter {
 
     private void sendError(HttpServletRequest request, HttpServletResponse response, int status, String message) throws IOException {
         // 鉴权失败发生在 Spring MVC CORS 处理器之前，需手动补 CORS 头，否则浏览器只看到 CORS 错
-        addCorsHeaders(request, response);
+        CorsHeaders.apply(request, response);
         response.setStatus(status);
         response.setContentType("application/json;charset=UTF-8");
         response.getWriter().write("{\"message\":\"" + message + "\"}");
-    }
-
-    /**
-     * 错误响应补 CORS 头，对齐 CorsConfig 的 allowCredentials + allowedOriginPatterns(*)
-     */
-    private void addCorsHeaders(HttpServletRequest request, HttpServletResponse response) {
-        String origin = request.getHeader("Origin");
-        if (origin == null || origin.isEmpty()) {
-            return;
-        }
-        response.setHeader("Access-Control-Allow-Origin", origin);
-        response.setHeader("Vary", "Origin");
-        response.setHeader("Access-Control-Allow-Credentials", "true");
-        response.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-        response.setHeader("Access-Control-Max-Age", "3600");
-        String requestHeaders = request.getHeader("Access-Control-Request-Headers");
-        if (requestHeaders != null && !requestHeaders.isEmpty()) {
-            response.setHeader("Access-Control-Allow-Headers", requestHeaders);
-        }
     }
 }

@@ -7,7 +7,6 @@ import com.jun.aicodehelper.ai.multimodal.VideoFrameExtractor;
 import com.jun.aicodehelper.security.SseConcurrencyGuard;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -37,9 +36,6 @@ public class AiController {
 
     private static final Duration HEARTBEAT_INTERVAL = Duration.ofSeconds(15);
     private static final Set<String> IMAGE_MIME = Set.of("image/jpeg", "image/png", "image/webp", "image/gif");
-
-    @Value("${app.upload.dir:uploads}")
-    private String uploadDir;
 
     @Resource
     private AiCodeHelperService aiCodeHelperService;
@@ -131,13 +127,13 @@ public class AiController {
         if (!videoFrameExtractor.isAvailable()) {
             throw new IllegalStateException("系统未安装 ffmpeg，无法处理视频问答。请联系管理员安装 ffmpeg。");
         }
-        Path dir = Paths.get(uploadDir).toAbsolutePath();
-        Files.createDirectories(dir);
+        Path tmpDir = Paths.get(System.getProperty("java.io.tmpdir"), "ai-chat");
+        Files.createDirectories(tmpDir);
         String tmpName = UUID.randomUUID() + ".mp4";
-        Path tmp = dir.resolve(tmpName);
+        Path tmp = tmpDir.resolve(tmpName);
         Files.write(tmp, file.getBytes(),
                 StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
-        Path frameDir = dir.resolve(tmpName + "_frames");
+        Path frameDir = tmpDir.resolve(tmpName + "_frames");
         List<byte[]> frameBytes = new ArrayList<>();
         try {
             List<Path> frames = videoFrameExtractor.extract(tmp, frameDir);
@@ -145,7 +141,7 @@ public class AiController {
                 frameBytes.add(Files.readAllBytes(f));
             }
         } finally {
-            // 抽完即清帧目录，避免 uploads 长期膨胀
+            // 抽完即清，避免临时目录堆积
             try {
                 if (Files.exists(frameDir)) {
                     try (var stream = Files.list(frameDir)) {

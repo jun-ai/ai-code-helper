@@ -39,11 +39,32 @@ minimax:
   api-key: ${MINIMAX_API_KEY:}
   base-url: https://api.minimaxi.com/v1
   embedding-model: embo-01
+aliyun:
+  oss:
+    # 总开关；false 时 OssService 所有方法直接抛 IllegalStateException（前端上传/知识库管理会失败）
+    enabled: false
+    # 公网 endpoint：例 oss-cn-hangzhou.aliyuncs.com
+    endpoint: ${OSS_ENDPOINT:}
+    # 内网 endpoint（可选）：后端→OSS 走内网时填写，留空则与 endpoint 相同
+    internal-endpoint: ${OSS_INTERNAL_ENDPOINT:}
+    bucket: ${OSS_BUCKET:}
+    access-key: ${OSS_AK:}
+    secret-key: ${OSS_SK:}
+    # 所有写入对象的根前缀（私有路径）
+    key-prefix: uploads
+    # 该前缀下对象公共读（图片/视频帧），前端 <img src> 直接可用
+    public-prefix: public
+    # 签名 URL 有效期（前端 PUT）
+    presign-expire-seconds: 900
+    # 签名 GET 有效期（私有对象的下载链接）
+    download-expire-seconds: 3600
 api:
   security:
     enabled: true
     # 调用方需携带 X-API-Key 请求头；生产用环境变量注入，未配置则全部拒绝
     api-key: ${APP_API_KEY:}
+    # 管理员密钥：持有此 key 才能调 /api/rag/* 和 /api/admin/*；未配置则全部拒绝（fail-closed）
+    admin-key: ${APP_ADMIN_KEY:}
   rate-limit:
     # 每 API Key 每分钟最大请求数
     requests-per-minute: 10

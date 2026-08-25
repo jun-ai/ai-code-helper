@@ -9,7 +9,15 @@
             show-password-on="click"
             placeholder="后端 X-API-Key"
           />
-          <div class="hint">修改后需要刷新页面（拦截器在 main.js 加载时注入）</div>
+        </n-form-item>
+
+        <n-form-item label="Admin Key">
+          <n-input
+            v-model:value="form.adminKey"
+            type="password"
+            show-password-on="click"
+            placeholder="后台 X-Admin-Key（独立管理后台用）"
+          />
         </n-form-item>
 
         <n-form-item label="主题">
@@ -49,9 +57,9 @@
           <n-space vertical>
             <n-button block @click="saveSettings">保存</n-button>
             <n-button block secondary @click="resetSettings">恢复默认</n-button>
-            <n-button block secondary type="primary" @click="openKB">
-              <template #icon><span>📚</span></template>
-              打开知识库管理
+            <n-button block secondary type="primary" @click="goAdmin">
+              <template #icon><span>⚙️</span></template>
+              打开管理后台
             </n-button>
           </n-space>
         </n-form-item>
@@ -67,6 +75,7 @@ import { safeGetJSON, safeSet, KEY } from '../composables/storage.js'
 
 const DEFAULT_SETTINGS = {
   apiKey: '',
+  adminKey: '',
   chatModel: 'glm-4-flash',
   visionModel: 'glm-4v-flash',
   embeddingModel: 'MiniMax-embo-01',
@@ -83,7 +92,7 @@ export default {
   props: {
     show: { type: Boolean, default: false }
   },
-  emits: ['update:show', 'open-kb'],
+  emits: ['update:show'],
   setup(props, { emit }) {
     const stored = safeGetJSON(KEY.SETTINGS, DEFAULT_SETTINGS) || DEFAULT_SETTINGS
     const form = reactive({ ...DEFAULT_SETTINGS, ...stored })
@@ -109,8 +118,10 @@ export default {
       safeSet(KEY.SETTINGS, JSON.stringify(DEFAULT_SETTINGS))
     }
 
-    const openKB = () => {
-      emit('open-kb')
+    const goAdmin = () => {
+      window.location.hash = ''
+      window.location.pathname = '/admin'
+      window.location.reload()
     }
 
     // 暴露给模板的转发方法，避免 _ctx.emit 为 undefined
@@ -120,7 +131,7 @@ export default {
       document.documentElement.setAttribute('data-theme', val)
     })
 
-    return { form, chatModels, visionModels, saveSettings, resetSettings, openKB, updateShow }
+    return { form, chatModels, visionModels, saveSettings, resetSettings, goAdmin, updateShow }
   }
 }
 </script>
