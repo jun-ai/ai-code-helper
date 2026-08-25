@@ -1,6 +1,6 @@
 <template>
-  <n-drawer :show="show" @update:show="(v) => emit('update:show', v)" :width="380" placement="right">
-    <n-drawer-content title="设置" closable @close="emit('update:show', false)">
+  <n-drawer :show="show" @update:show="updateShow" :width="380" placement="right">
+    <n-drawer-content title="设置" closable @close="updateShow(false)">
       <n-form label-placement="top" size="small">
         <n-form-item label="API Key">
           <n-input
@@ -113,11 +113,14 @@ export default {
       emit('open-kb')
     }
 
+    // 暴露给模板的转发方法，避免 _ctx.emit 为 undefined
+    function updateShow(v) { emit('update:show', v) }
+
     watch(() => form.theme, (val) => {
       document.documentElement.setAttribute('data-theme', val)
     })
 
-    return { form, chatModels, visionModels, saveSettings, resetSettings, openKB }
+    return { form, chatModels, visionModels, saveSettings, resetSettings, openKB, updateShow }
   }
 }
 </script>

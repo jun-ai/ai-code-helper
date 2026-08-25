@@ -1,11 +1,11 @@
 <template>
   <n-drawer
     :show="show"
-    @update:show="(v) => emit('update:show', v)"
+    @update:show="updateShow"
     :width="520"
     placement="right"
   >
-    <n-drawer-content title="📚 知识库管理" closable @close="emit('update:show', false)">
+    <n-drawer-content title="📚 知识库管理" closable @close="updateShow(false)">
       <div class="kb-toolbar">
         <n-space>
           <n-button type="primary" size="small" :loading="loading" @click="refresh">
@@ -102,6 +102,9 @@ export default {
     const dialog = useDialog()
     const message = useMessage()
 
+    // 暴露给模板：用 method 转发 v-model，避免模板直接引用 ctx.emit
+    function updateShow(v) { emit('update:show', v) }
+
     function formatSize(n) {
         if (n < 1024) return `${n} B`
         if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
@@ -189,7 +192,7 @@ export default {
         }
     })
 
-    return { docs, loading, rebuilding, deleting, lastResult, formatSize, refresh, confirmDelete, confirmRebuild }
+    return { docs, loading, rebuilding, deleting, lastResult, formatSize, refresh, confirmDelete, confirmRebuild, updateShow }
   }
 }
 </script>
