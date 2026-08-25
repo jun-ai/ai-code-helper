@@ -135,16 +135,28 @@ export function useChat(getSessionId, getMemoryId, onSessionUpdate) {
     }
     connectionError.value = false
 
-    const streamFn = pendingAttachment ? chatWithFile : chatWithSSE
-    abortHandle.value = streamFn(
-      getMemoryId(),
-      message || '',
-      pendingAttachment || null,
-      handleChunk,
-      handleError,
-      handleClose,
-      handleStreamRetry
-    )
+    // chatWithSSE 和 chatWithFile 签名不同：前者无 attachment 参数；后者 attachment 占第三位。
+    // 用同一个 streamFn 调会让 SSE 路径把 null 当 onMessage 传，触发 onMessage is not a function。
+    if (pendingAttachment) {
+      abortHandle.value = chatWithFile(
+        getMemoryId(),
+        message || '',
+        pendingAttachment,
+        handleChunk,
+        handleError,
+        handleClose,
+        handleStreamRetry
+      )
+    } else {
+      abortHandle.value = chatWithSSE(
+        getMemoryId(),
+        message || '',
+        handleChunk,
+        handleError,
+        handleClose,
+        handleStreamRetry
+      )
+    }
   }
 
   const handleStreamRetry = () => {
