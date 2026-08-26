@@ -35,6 +35,10 @@ logging:
   pattern:
     # 把 traceId（由 TraceIdFilter 注入 MDC）打到每条日志里，便于整链路排查
     level: "%5p [traceId=%X{traceId:-}]"
+  file:
+    # 后台「日志」面板读这个文件；目录不存在时 Spring 会自动创建
+    name: logs/app.log
+    path: ./logs
 minimax:
   api-key: ${MINIMAX_API_KEY:}
   base-url: https://api.minimaxi.com/v1

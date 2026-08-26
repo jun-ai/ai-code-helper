@@ -42,14 +42,14 @@ export default {
     const error = ref('')
     let timer = null
 
-    // 关注的指标（grep key 即可，无需复杂解析器）
+    // 关注的指标（Micrometer → Prometheus 命名：. 转 _，Counter 加 _total）
     const WANTED = [
       { key: 'jvm_memory_used_bytes', labels: ['area="heap"'], label: 'JVM Heap 用量', hint: '字节' },
       { key: 'process_cpu_usage', labels: [], label: '进程 CPU 使用率', hint: '0~1' },
       { key: 'chat_requests_total', labels: [], label: '聊天请求总数', hint: 'Prometheus Counter' },
-      { key: 'chat_request_errors_total', labels: [], label: '聊天失败次数', hint: 'Prometheus Counter' },
+      { key: 'chat_errors_total', labels: [], label: '聊天失败次数', hint: 'Prometheus Counter' },
       { key: 'rag_retrieves_total', labels: [], label: 'RAG 检索次数', hint: 'Prometheus Counter' },
-      { key: 'rag_retrieve_fallback_total', labels: [], label: 'RAG 兜底次数', hint: '兜底 = 检索为空后退化' }
+      { key: 'rag_fallback_total', labels: [], label: 'RAG 兜底次数', hint: '空结果或异常' }
     ]
 
     function findMetric(text, key, labels = []) {

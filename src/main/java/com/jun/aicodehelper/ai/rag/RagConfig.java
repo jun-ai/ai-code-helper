@@ -206,6 +206,7 @@ public class RagConfig {
         return new FallbackContentRetriever(
                 new CachingContentRetriever(
                         new HybridContentRetriever(embeddingStore(), minimaxEmbeddingModel,
-                                bm25Index, zhipuChatModel, ragProperties, metrics)));
+                                bm25Index, zhipuChatModel, ragProperties, metrics)),
+                metrics);
     }
 }
