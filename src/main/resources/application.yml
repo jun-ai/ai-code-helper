@@ -107,6 +107,12 @@ management:
     web:
       exposure:
         include: health,info,metrics,prometheus
+      # actuator 不走 Spring MVC 的 CorsConfig（独立 handler mapping），必须单独配，
+      # 否则监控面板直连 /api/actuator/prometheus 会再次被 CORS 拦截
+      cors:
+        allowed-origin-patterns: "*"
+        allowed-methods: "*"
+        allowed-headers: "*"
   endpoint:
     health:
       show-details: always

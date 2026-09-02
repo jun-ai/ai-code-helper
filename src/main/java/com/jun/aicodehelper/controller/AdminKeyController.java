@@ -10,10 +10,10 @@ import org.yaml.snakeyaml.DumperOptions;
 import org.yaml.snakeyaml.Yaml;
 
 import java.io.FileInputStream;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.Writer;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -55,20 +55,25 @@ public class AdminKeyController {
     @PostMapping("/rotate")
     public Map<String, Object> rotateAdmin() throws IOException {
         String newAdminKey = randomKey(24);
-        writeAdminKey(newAdminKey);
+        boolean created = writeAdminKey(newAdminKey);
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("ok", true);
         resp.put("adminKey", newAdminKey);   // 一次性回显，重启前不会再次出现
-        resp.put("message", "新 adminKey 已写入 application-local.yml，重启后端生效");
-        log.warn("adminKey 已轮换（旧值已废弃）");
+        resp.put("path", LOCAL_YML.toAbsolutePath().toString());
+        resp.put("created", created);
+        resp.put("message", created
+                ? "已新建并写入 " + LOCAL_YML.toAbsolutePath() + "（注意：相对运行目录，打包部署时请改用 APP_ADMIN_KEY 环境变量），重启后端生效"
+                : "新 adminKey 已写入 " + LOCAL_YML.toAbsolutePath() + "，重启后端生效");
+        log.warn("adminKey 已轮换（旧值已废弃）path={} created={}", LOCAL_YML.toAbsolutePath(), created);
         return resp;
     }
 
-    /** 写 application-local.yml 的 api.security.admin-key；其它 key 保持原样 */
+    /** 写 application-local.yml 的 api.security.admin-key；其它 key 保持原样。返回是否为新建文件 */
     @SuppressWarnings("unchecked")
-    private void writeAdminKey(String newAdminKey) throws IOException {
+    private boolean writeAdminKey(String newAdminKey) throws IOException {
         Map<String, Object> root;
-        if (Files.exists(LOCAL_YML)) {
+        boolean existed = Files.exists(LOCAL_YML);
+        if (existed) {
             try (InputStream in = new FileInputStream(LOCAL_YML.toFile())) {
                 Object loaded = new Yaml().load(in);
                 root = (loaded instanceof Map) ? (Map<String, Object>) loaded : new LinkedHashMap<>();
@@ -77,20 +82,20 @@ public class AdminKeyController {
             root = new LinkedHashMap<>();
             Files.createDirectories(LOCAL_YML.getParent());
         }
-        Map<String, Object> spring = (Map<String, Object>) root.computeIfAbsent("spring", k -> new LinkedHashMap<>());
         Map<String, Object> api = (Map<String, Object>) root.computeIfAbsent("api", k -> new LinkedHashMap<>());
         Map<String, Object> security = (Map<String, Object>) api.computeIfAbsent("security", k -> new LinkedHashMap<>());
         security.put("admin-key", newAdminKey);
 
-        // 避免写出 spring 节点下没用的 datasource/password 干扰（保留原样）
         DumperOptions options = new DumperOptions();
         options.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);
         options.setIndent(2);
         options.setPrettyFlow(true);
         Yaml writer = new Yaml(options);
-        try (Writer w = new FileWriter(LOCAL_YML.toFile())) {
+        // 显式 UTF-8：FileWriter 用平台默认编码，中文 Windows 上是 GBK
+        try (Writer w = Files.newBufferedWriter(LOCAL_YML, StandardCharsets.UTF_8)) {
             writer.dump(root, w);
         }
+        return !existed;
     }
 
     /** 仅展示前 4 + 后 4，中间 ***；空值返回 (未配置) */

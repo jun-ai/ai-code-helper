@@ -5,6 +5,7 @@ import com.jun.aicodehelper.ai.multimodal.VideoFrameExtractor;
 import com.jun.aicodehelper.ai.rag.RagIngestService;
 import com.jun.aicodehelper.oss.OssProperties;
 import com.jun.aicodehelper.oss.OssService;
+import com.jun.aicodehelper.oss.PresignKeyRegistry;
 import jakarta.annotation.Resource;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -66,6 +67,9 @@ public class UploadController {
     @Resource
     private DocSummaryService docSummaryService;
 
+    @Resource
+    private PresignKeyRegistry presignKeyRegistry;
+
     // ---------- 1. 签名 ----------
 
     @PostMapping("/presign")
@@ -82,6 +86,8 @@ public class UploadController {
         String ext = extractExt(fileName);
         String key = buildKey(ext, fileName, null);
         OssService.PresignResult presign = ossService.presignPut(key, contentType);
+        // 登记签发的 key：finish 只认登记过的，防止拿任意 key 换签名下载 URL
+        presignKeyRegistry.register(key, ossProperties.getPresignExpireSeconds() * 1000L + 60_000L);
         Map<String, Object> body = new HashMap<>();
         body.put("uploadUrl", presign.getUploadUrl());
         body.put("key", presign.getKey());
@@ -96,6 +102,10 @@ public class UploadController {
     public ResponseEntity<Map<String, Object>> finish(@RequestBody FinishRequest req) {
         if (req == null || req.key == null || req.fileName == null) {
             return ResponseEntity.badRequest().body(error("缺少 key 或 fileName"));
+        }
+        // key 必须是本服务 presign 签发的（保留到 presign 过期 + 缓冲，finish 失败重试不受影响）
+        if (!presignKeyRegistry.isIssued(req.key)) {
+            return ResponseEntity.badRequest().body(error("key 无效或已过期，请重新上传获取"));
         }
         String originalName = req.fileName;
         String ext = extractExt(originalName);
@@ -180,7 +190,11 @@ public class UploadController {
                 result.put("frameWarning", "系统未安装 ffmpeg，无法抽帧；请先安装 ffmpeg");
                 return;
             }
-            String safeStem = key.hashCode() + "_" + UUID.randomUUID().toString().substring(0, 8);
+            // 帧目录名 = 视频 key 自身文件名主干（16 位 hex uuid）：
+            // RagAdminService 删除时按 public/{stem}_frames/ 反查，随机后缀会对不上、帧变孤儿
+            String base = key.substring(key.lastIndexOf('/') + 1);
+            int dotIdx = base.lastIndexOf('.');
+            String safeStem = dotIdx > 0 ? base.substring(0, dotIdx) : base;
             frameDir = Paths.get(System.getProperty("java.io.tmpdir"), "ai-oss", safeStem + "_frames");
             List<Path> frames = videoFrameExtractor.extract(tmp, frameDir);
             List<String> frameUrls = new ArrayList<>();

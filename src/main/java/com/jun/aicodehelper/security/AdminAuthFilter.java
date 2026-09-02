@@ -63,10 +63,12 @@ public class AdminAuthFilter extends OncePerRequestFilter {
         chain.doFilter(request, response);
     }
 
-    /** 路径前缀匹配：/api/rag/xxx 与 /api/admin/xxx 都归 AdminAuthFilter 管 */
+    /** 路径前缀匹配：/api/rag、/api/admin、/api/actuator 都归 AdminAuthFilter 管 */
     private boolean isAdminPath(String ctx, String uri) {
         if (uri == null || ctx == null) return false;
-        return matchesPrefix(uri, ctx + "/rag") || matchesPrefix(uri, ctx + "/admin");
+        return matchesPrefix(uri, ctx + "/rag")
+                || matchesPrefix(uri, ctx + "/admin")
+                || matchesPrefix(uri, ctx + "/actuator");
     }
 
     /** 段级精确前缀：避免 /api/ragxxx 被误判 */

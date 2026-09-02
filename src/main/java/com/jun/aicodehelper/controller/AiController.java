@@ -59,7 +59,8 @@ public class AiController {
     public Flux<ServerSentEvent<String>> chat(int memoryId, String message, HttpServletRequest request) {
         String ip = request.getRemoteAddr();
         AtomicBoolean done = new AtomicBoolean(false);
-        Flux<ServerSentEvent<String>> data = aiCodeHelperService.chatStream(memoryId, message)
+        // defer：chatStream 同步抛错也转成 onError，保证 doFinally 释放并发槽（否则泄漏成永久 429）
+        Flux<ServerSentEvent<String>> data = Flux.defer(() -> aiCodeHelperService.chatStream(memoryId, message))
                 .map(chunk -> ServerSentEvent.<String>builder().data(chunk).build())
                 .doFinally(signal -> {
                     done.set(true);
@@ -104,7 +105,10 @@ public class AiController {
                 source = aiCodeHelperService.chatStream(memoryId, message == null ? "" : message);
             }
         } catch (Exception e) {
-            return Flux.just(errorEvent(e));
+            // 组装期同步异常走不到 doFinally：手动释放并发槽并计数，否则同 IP 累计后永久 429
+            metrics.getChatRequests().increment();
+            sseConcurrencyGuard.release(ip);
+            return emitError(e);
         }
 
         Flux<ServerSentEvent<String>> data = source
