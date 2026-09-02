@@ -138,8 +138,10 @@ function sseStream(url, init, onMessage, onError, onClose, onRetry) {
                             const ev = eventName.slice(6).trim()
                             const data = dataLine.slice(5).trim()
                             if (ev === 'error') {
-                                // 后端业务错误帧：抛出，终止流
-                                throw new Error(parseErrorMessage(data) || '生成失败')
+                                // 后端业务错误帧：打标记抛出，catch 里不重试
+                                const err = new Error(parseErrorMessage(data) || '生成失败')
+                                err.businessError = true
+                                throw err
                             }
                             // 其他自定义事件暂不处理
                         } else if (dataLine) {
@@ -161,7 +163,9 @@ function sseStream(url, init, onMessage, onError, onClose, onRetry) {
                         const ev = eventName.slice(6).trim()
                         const data = dataLine.slice(5).trim()
                         if (ev === 'error') {
-                            throw new Error(parseErrorMessage(data) || '生成失败')
+                            const err = new Error(parseErrorMessage(data) || '生成失败')
+                            err.businessError = true
+                            throw err
                         }
                     } else if (dataLine) {
                         const data = dataLine.slice(5).trim()
@@ -175,9 +179,21 @@ function sseStream(url, init, onMessage, onError, onClose, onRetry) {
                 if (err.name === 'AbortError') {
                     return
                 }
+                // 业务错误帧（配额/key 无效等）重试无意义，直接上抛
+                if (err.businessError) {
+                    throw err
+                }
                 if (receivedAnyChunk && attempt < MAX_RETRIES) {
                     attempt++
+                    // 清空半截草稿再重试，避免新旧回答拼接重复
+                    if (onRetry) onRetry()
                     await sleep(800 * Math.pow(2, attempt))
+                    continue
+                }
+                if (!receivedAnyChunk && attempt < MAX_RETRIES) {
+                    // 建连失败（网络层异常）也算瞬时错误，按退避重试
+                    attempt++
+                    await sleep(500 * Math.pow(2, attempt))
                     continue
                 }
                 throw err

@@ -42,6 +42,8 @@ export default {
     const lastFetchedAt = ref('')
     const bodyRef = ref(null)
     let timer = null
+    let loadSeq = 0        // 请求序号：并发时只认最新一次，过期响应直接丢弃
+    let filterTimer = null
 
     const lineOptions = [
       { label: '100 行', value: 100 },
@@ -65,6 +67,7 @@ export default {
     }
 
     async function load() {
+      const seq = ++loadSeq
       loading.value = true
       error.value = ''
       try {
@@ -72,15 +75,17 @@ export default {
           params: { lines: lines.value, filter: filter.value || undefined },
           timeout: 8000
         })
+        if (seq !== loadSeq) return // 已有更新的请求，丢弃旧响应
         const payload = r.data
         allLines.value = (payload.lines && payload.lines.length) ? payload.lines : (payload.content ? payload.content.split('\n') : [])
         lastFetchedAt.value = new Date().toLocaleTimeString('zh-CN')
         await nextTick()
         if (bodyRef.value) bodyRef.value.scrollTop = bodyRef.value.scrollHeight
       } catch (e) {
+        if (seq !== loadSeq) return
         error.value = (e.response && e.response.data && e.response.data.message) || e.message || '拉取失败'
       } finally {
-        loading.value = false
+        if (seq === loadSeq) loading.value = false
       }
     }
 
@@ -94,12 +99,20 @@ export default {
     }
 
     watch(auto, (v) => { v ? startTimer() : stopTimer() })
-    watch(filter, () => load())
+    // 过滤词防抖 300ms，避免每个按键都打一次后端
+    watch(filter, () => {
+      clearTimeout(filterTimer)
+      filterTimer = setTimeout(load, 300)
+    })
+    watch(lines, () => load())
 
     onMounted(() => { load(); startTimer() })
-    onBeforeUnmount(stopTimer)
+    onBeforeUnmount(() => {
+      stopTimer()
+      clearTimeout(filterTimer)
+    })
 
-    return { lines, filter, auto, loading, error, displayLines, lastFetchedAt, lineOptions, bodyRef, load }
+    return { lines, filter, auto, loading, error, displayLines, lastFetchedAt, lineOptions, bodyRef, lineClass, load }
   }
 }
 </script>

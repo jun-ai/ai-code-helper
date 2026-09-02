@@ -226,13 +226,13 @@ export default {
     }
 
     const handleNewSession = () => {
-      ensureCurrent()
+      // createSession 自带切换；不再 ensureCurrent，避免一次点击建出两个空会话
       const id = createSession('新会话')
       switchSession(id)
     }
 
     const handleSwitch = (id) => {
-      if (chat.abortHandle.value) chat.abortHandle.value.close()
+      // 流的中断由 useChat 内部 watch(sessionId) 处理，这里只切换
       switchSession(id)
       nextTick(scrollToBottom)
     }

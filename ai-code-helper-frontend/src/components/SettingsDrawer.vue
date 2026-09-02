@@ -72,7 +72,7 @@
 import { reactive, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { NDrawer, NDrawerContent, NForm, NFormItem, NInput, NSelect, NSwitch, NRadioGroup, NRadio, NDivider, NSpace, NButton } from 'naive-ui'
-import { safeGetJSON, safeSet, KEY } from '../composables/storage.js'
+import { safeGet, safeGetJSON, safeSet, safeRemove, KEY } from '../composables/storage.js'
 
 const DEFAULT_SETTINGS = {
   apiKey: '',
@@ -95,9 +95,16 @@ export default {
   },
   emits: ['update:show'],
   setup(props, { emit }) {
-    const stored = safeGetJSON(KEY.SETTINGS, DEFAULT_SETTINGS) || DEFAULT_SETTINGS
-    const form = reactive({ ...DEFAULT_SETTINGS, ...stored })
+    const form = reactive({ ...DEFAULT_SETTINGS })
     const router = useRouter()
+
+    // 每次打开都从存储重读：adminKey 可能在登录页被更新，陈旧快照保存会把它抹掉
+    function refreshForm() {
+      const stored = safeGetJSON(KEY.SETTINGS, {}) || {}
+      Object.assign(form, DEFAULT_SETTINGS, stored, { adminKey: safeGet(KEY.ADMIN_KEY, '') || '' })
+    }
+    refreshForm()
+    watch(() => props.show, (v) => { if (v) refreshForm() })
 
     const chatModels = [
       { label: 'glm-4-flash（推荐·免费）', value: 'glm-4-flash' },
@@ -110,14 +117,22 @@ export default {
     ]
 
     const saveSettings = () => {
-      safeSet(KEY.SETTINGS, JSON.stringify(form))
+      // adminKey 单独存 KEY.ADMIN_KEY，settings JSON 不再包含它（单一事实源）
+      const { adminKey, ...rest } = form
+      if (adminKey) safeSet(KEY.ADMIN_KEY, adminKey)
+      else safeRemove(KEY.ADMIN_KEY)
+      safeSet(KEY.SETTINGS, JSON.stringify(rest))
       document.documentElement.setAttribute('data-theme', form.theme)
       emit('update:show', false)
     }
 
     const resetSettings = () => {
-      Object.assign(form, DEFAULT_SETTINGS)
-      safeSet(KEY.SETTINGS, JSON.stringify(DEFAULT_SETTINGS))
+      // 密钥不参与恢复默认，避免一键清掉导致全接口 401
+      const keepApiKey = form.apiKey
+      const keepAdminKey = form.adminKey
+      Object.assign(form, DEFAULT_SETTINGS, { apiKey: keepApiKey, adminKey: keepAdminKey })
+      const { adminKey, ...rest } = form
+      safeSet(KEY.SETTINGS, JSON.stringify(rest))
     }
 
     const goAdmin = () => {

@@ -20,6 +20,12 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8081',
         changeOrigin: true
+      },
+      // Prometheus 端点在后端 /api context-path 下，rewrite 补前缀；同源代理避免 CORS
+      '/actuator': {
+        target: 'http://localhost:8081',
+        changeOrigin: true,
+        rewrite: (path) => '/api' + path
       }
     }
   }

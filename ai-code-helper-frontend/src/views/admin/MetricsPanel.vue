@@ -54,22 +54,22 @@ export default {
 
     function findMetric(text, key, labels = []) {
       if (!text) return null
-      const lines = text.split('\n')
-      for (const line of lines) {
+      let sum = null
+      for (const line of text.split('\n')) {
         if (!line || line.startsWith('#')) continue
         if (!line.startsWith(key)) continue
         if (labels.length === 0) {
-          // 抓第一个匹配（无 label 或任意 label）
-          const m = line.match(/^[a-zA-Z_:][a-zA-Z0-9_:]+\s+([0-9.eE+\-]+)/)
+          // 容忍指标名后跟可选的 {labels} 块（全局 tag 如 application="ai-code-helper"）
+          const m = line.match(/^[a-zA-Z_:][a-zA-Z0-9_:]+\s*(?:\{[^}]*\})?\s+([0-9.eE+\-]+)/)
           if (m) return Number(m[1])
         } else {
           if (labels.every((l) => line.includes(l))) {
             const m = line.match(/^[a-zA-Z_:][a-zA-Z0-9_:]*\{[^}]*\}\s+([0-9.eE+\-]+)/)
-            if (m) return Number(m[1])
+            if (m) sum = (sum || 0) + Number(m[1])
           }
         }
       }
-      return null
+      return sum
     }
 
     function formatNum(n) {
@@ -84,8 +84,8 @@ export default {
       return WANTED.map((w) => {
         const v = findMetric(raw.value, w.key, w.labels)
         let tone = ''
-        if (w.key === 'chat_request_errors_total' && v > 0) tone = 'warn'
-        if (w.key === 'rag_retrieve_fallback_total' && v > 10) tone = 'warn'
+        if (w.key === 'chat_errors_total' && v > 0) tone = 'warn'
+        if (w.key === 'rag_fallback_total' && v > 10) tone = 'warn'
         return { label: w.label, value: formatNum(v), hint: w.hint, tone }
       })
     })
@@ -103,7 +103,9 @@ export default {
       loading.value = true
       error.value = ''
       try {
-        const r = await axios.get(`${API_BASE_URL.replace(/\/api$/, '')}/actuator/prometheus`, { timeout: 8000 })
+        // 绝对地址 + 拦截器注入 X-Admin-Key（actuator 已纳入 AdminAuthFilter）；
+        // CORS 由 management.endpoints.web.cors 处理，dev/build 两种部署都可用
+        const r = await axios.get(`${API_BASE_URL}/actuator/prometheus`, { timeout: 8000 })
         raw.value = r.data
         lastFetchedAt.value = new Date().toLocaleTimeString('zh-CN')
       } catch (e) {

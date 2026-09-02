@@ -57,10 +57,6 @@ export default {
           timeout: 5000
         })
         safeSet(KEY.ADMIN_KEY, v)
-        // 同时把 adminKey 也写到 SETTINGS 里，便于 axios interceptor 也能读到
-        const settings = JSON.parse(localStorage.getItem(KEY.SETTINGS) || '{}')
-        settings.adminKey = v
-        safeSet(KEY.SETTINGS, JSON.stringify(settings))
         const target = route.query.redirect || '/admin'
         router.replace(target)
       } catch (e) {

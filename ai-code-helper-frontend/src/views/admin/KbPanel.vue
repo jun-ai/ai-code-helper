@@ -88,13 +88,18 @@ export default {
       return `${(n / 1024 / 1024).toFixed(2)} MB`
     }
 
+    // axios 错误优先取后端 message 字段，避免 401 时只显示 HTTP 状态
+    function errText(e) {
+      return (e && e.response && e.response.data && e.response.data.message) || (e && e.message) || '未知错误'
+    }
+
     async function refresh() {
       loading.value = true
       try {
         const data = await listDocs()
         docs.value = data.docs || []
       } catch (e) {
-        message.error('获取列表失败: ' + (e.message || '未知错误'))
+        message.error('获取列表失败: ' + errText(e))
       } finally {
         loading.value = false
       }
@@ -114,7 +119,7 @@ export default {
         lastResult.value = {
           ok: false,
           title: '删除失败',
-          message: e.message || '未知错误'
+          message: errText(e)
         }
       } finally {
         deleting.value = ''
@@ -145,7 +150,7 @@ export default {
         lastResult.value = {
           ok: false,
           title: '重建失败',
-          message: e.message || '未知错误'
+          message: errText(e)
         }
       } finally {
         rebuilding.value = false

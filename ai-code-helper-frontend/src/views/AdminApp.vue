@@ -38,7 +38,7 @@
 <script>
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { safeRemove, KEY } from '../composables/storage.js'
+import { safeGetJSON, safeSet, safeRemove, KEY } from '../composables/storage.js'
 
 export default {
   name: 'AdminApp',
@@ -61,9 +61,9 @@ export default {
     const goUser = () => router.push('/')
     const logout = () => {
       safeRemove(KEY.ADMIN_KEY)
-      const settings = JSON.parse(localStorage.getItem(KEY.SETTINGS) || '{}')
+      const settings = safeGetJSON(KEY.SETTINGS, {}) || {}
       delete settings.adminKey
-      try { localStorage.setItem(KEY.SETTINGS, JSON.stringify(settings)) } catch (_) {}
+      safeSet(KEY.SETTINGS, JSON.stringify(settings))
       router.replace('/admin/login')
     }
 
