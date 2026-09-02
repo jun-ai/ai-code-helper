@@ -3,6 +3,7 @@ application-local.yml
 rag-store.json
 milvus/volumes/
 *.log
+logs/
 ai-code-helper-frontend/.env
 
 HELP.md
