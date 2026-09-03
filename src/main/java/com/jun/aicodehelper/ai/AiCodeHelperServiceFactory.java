@@ -1,7 +1,6 @@
 package com.jun.aicodehelper.ai;
 
 import com.jun.aicodehelper.ai.memory.MysqlChatMemoryStore;
-import dev.langchain4j.mcp.McpToolProvider;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
@@ -20,16 +19,16 @@ import java.util.List;
 public class AiCodeHelperServiceFactory {
 
     @Resource
-    private ChatModel zhipuChatModel;
+    private ChatModel failoverChatModel;
 
     @Resource
-    private StreamingChatModel zhipuStreamingChatModel;
+    private StreamingChatModel failoverStreamingChatModel;
 
     @Resource
     private ContentRetriever contentRetriever;
 
     @Resource
-    private McpToolProvider mcpToolProvider;
+    private dev.langchain4j.service.tool.ToolProvider mcpToolProvider;
 
     @Resource
     private MysqlChatMemoryStore mysqlChatMemoryStore;
@@ -47,8 +46,8 @@ public class AiCodeHelperServiceFactory {
                 .contentRetriever(contentRetriever)
                 .build();
         AiCodeHelperService aiCodeHelperService = AiServices.builder(AiCodeHelperService.class)
-                .chatModel(zhipuChatModel)
-                .streamingChatModel(zhipuStreamingChatModel)
+                .chatModel(failoverChatModel)
+                .streamingChatModel(failoverStreamingChatModel)
                 .chatMemoryProvider(memoryId -> MessageWindowChatMemory.builder()
                         .id(memoryId)
                         .maxMessages(10)

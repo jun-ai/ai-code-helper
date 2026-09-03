@@ -15,6 +15,7 @@ public class AppMetrics {
 
     private final Counter chatRequests;
     private final Counter chatErrors;
+    private final Counter llmFailover;
     private final Counter ragRetrieves;
     private final Counter ragFallback;
     private final Counter embeddingCalls;
@@ -30,6 +31,7 @@ public class AppMetrics {
     public AppMetrics(MeterRegistry registry) {
         this.chatRequests = Counter.builder("chat.requests").description("聊天请求总数").register(registry);
         this.chatErrors = Counter.builder("chat.errors").description("聊天请求失败数").register(registry);
+        this.llmFailover = Counter.builder("llm.failover").description("主模型失败降级到 MiniMax 的次数").register(registry);
         this.ragRetrieves = Counter.builder("rag.retrieves").description("RAG 检索请求总数（含失败）").register(registry);
         this.ragFallback = Counter.builder("rag.fallback").description("RAG 检索触发兜底的次数（空结果或异常）").register(registry);
         this.embeddingCalls = Counter.builder("embedding.calls").description("MiniMax embedding 调用次数（缓存未命中）").register(registry);

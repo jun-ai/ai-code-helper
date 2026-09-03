@@ -49,7 +49,8 @@ export default {
       { key: 'chat_requests_total', labels: [], label: '聊天请求总数', hint: 'Prometheus Counter' },
       { key: 'chat_errors_total', labels: [], label: '聊天失败次数', hint: 'Prometheus Counter' },
       { key: 'rag_retrieves_total', labels: [], label: 'RAG 检索次数', hint: 'Prometheus Counter' },
-      { key: 'rag_fallback_total', labels: [], label: 'RAG 兜底次数', hint: '空结果或异常' }
+      { key: 'rag_fallback_total', labels: [], label: 'RAG 兜底次数', hint: '空结果或异常' },
+      { key: 'llm_failover_total', labels: [], label: 'LLM 降级次数', hint: '智谱→MiniMax' }
     ]
 
     function findMetric(text, key, labels = []) {
