@@ -62,6 +62,7 @@ class RagScoreDiagnosticTest {
                                     .build();
                         }
                     },
+                    null,
                     props,
                     new com.jun.aicodehelper.ai.metrics.AppMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()))
                     .retrieve(dev.langchain4j.rag.query.Query.from(q));

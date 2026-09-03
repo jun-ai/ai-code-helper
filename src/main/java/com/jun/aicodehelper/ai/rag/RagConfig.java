@@ -1,5 +1,10 @@
 package com.jun.aicodehelper.ai.rag;
 
+import com.jun.aicodehelper.ai.metrics.AppMetrics;
+import com.jun.aicodehelper.ai.model.LlmReranker;
+import com.jun.aicodehelper.ai.model.RerankModel;
+import com.jun.aicodehelper.ai.model.SiliconFlowProperties;
+import com.jun.aicodehelper.ai.model.SiliconFlowReranker;
 import dev.langchain4j.data.document.Document;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
@@ -31,28 +36,30 @@ import java.util.List;
 import java.util.stream.Stream;
 
 /**
- * RAG 配置：按标题分节切割带前缀、向量存 Milvus、混合检索 + 缓存。
+ * RAG 配置：按标题分节切割带前缀（可选 small-to-big）、向量存 Milvus、混合检索 + 缓存。
  * 文档有变更时清空 Milvus collection 重启重建。
  */
 @Configuration
 @Slf4j
 public class RagConfig {
 
-    /**
-     * embo-01 输出向量维度
-     */
-    private static final int EMBEDDING_DIMENSION = 1536;
-
-    private final RagTextSplitter textSplitter = new RagTextSplitter();
-
     @Resource
-    private EmbeddingModel minimaxEmbeddingModel;
+    private EmbeddingModel embeddingModel;
 
     @Resource
     private RagProperties ragProperties;
 
     @Resource
     private Bm25Index bm25Index;
+
+    @Resource
+    private HierarchicalSplitter hierarchicalSplitter;
+
+    @Resource
+    private SiliconFlowProperties siliconFlowProperties;
+
+    @Value("${rag.rerank-provider:llm}")
+    private String rerankProvider;
 
     @Value("${milvus.host}")
     private String milvusHost;
@@ -63,13 +70,16 @@ public class RagConfig {
     @Value("${milvus.collection-name}")
     private String collectionName;
 
+    @Value("${milvus.dimension:1024}")
+    private Integer dimension;
+
     @Bean
     public EmbeddingStore<TextSegment> embeddingStore() {
         EmbeddingStore<TextSegment> store = MilvusEmbeddingStore.builder()
                 .host(milvusHost)
                 .port(milvusPort)
                 .collectionName(collectionName)
-                .dimension(EMBEDDING_DIMENSION)
+                .dimension(dimension)
                 .metricType(MetricType.COSINE)
                 .autoFlushOnInsert(true)
                 .build();
@@ -81,14 +91,29 @@ public class RagConfig {
                 log.error("RAG 启动期入库失败，跳过构建继续启动: err={}", e.getMessage(), e);
             }
         } else {
-            log.info("RAG 向量库命中 Milvus 已有数据，跳过构建");
+            log.info("RAG 向量库命中 Milvus 已有数据，跳过向量重建");
+            // BM25 是内存索引，重启即失：即使 Milvus 有数据也要重建（OSS 上传文档除外，仅 docs 目录）
+            rebuildBm25FromDocs();
         }
         return store;
     }
 
+    /** 不调 embedding 的轻量重建：切 docs 目录喂 BM25 */
+    private void rebuildBm25FromDocs() {
+        if (!ragProperties.isBm25Enabled()) {
+            return;
+        }
+        List<TextSegment> segments = new ArrayList<>();
+        for (Document document : loadAllDocuments(Paths.get("src/main/resources/docs"))) {
+            segments.addAll(hierarchicalSplitter.split(document));
+        }
+        bm25Index.rebuild(segments);
+        log.info("BM25 启动期重建完成: {} 切片（来源 docs 目录）", segments.size());
+    }
+
     private boolean isStoreEmpty(EmbeddingStore<TextSegment> store) {
         try {
-            Embedding probe = minimaxEmbeddingModel.embed("初始化探测").content();
+            Embedding probe = embeddingModel.embed("初始化探测").content();
             return store.search(EmbeddingSearchRequest.builder()
                             .queryEmbedding(probe)
                             .maxResults(1)
@@ -96,7 +121,7 @@ public class RagConfig {
                     .matches()
                     .isEmpty();
         } catch (Throwable e) {
-            // MiniMax API 暂时挂 / collection 不存在等情况统统视为空库，启动流程不阻塞
+            // embedding API 暂时挂 / collection 不存在等情况统统视为空库，启动流程不阻塞
             log.warn("RAG 空库探测失败，按空库处理走入库流程: err={}", e.getMessage());
             return true;
         }
@@ -121,9 +146,9 @@ public class RagConfig {
         List<Document> documents = loadAllDocuments(dir);
         List<TextSegment> segments = new ArrayList<>();
         for (Document document : documents) {
-            segments.addAll(textSplitter.split(document));
+            segments.addAll(hierarchicalSplitter.split(document));
         }
-        List<Embedding> embeddings = minimaxEmbeddingModel.embedAll(segments).content();
+        List<Embedding> embeddings = embeddingModel.embedAll(segments).content();
         store.addAll(embeddings, segments);
         if (ragProperties.isBm25Enabled()) {
             bm25Index.rebuild(segments);
@@ -201,12 +226,32 @@ public class RagConfig {
 
     @Bean
     public ContentRetriever contentRetriever(ChatModel zhipuChatModel,
-                                              com.jun.aicodehelper.ai.metrics.AppMetrics metrics) {
+                                              AppMetrics metrics) {
         // 外层 FallbackContentRetriever：Milvus / Embedding 异常时返回空上下文，让 LLM 继续作答
         return new FallbackContentRetriever(
                 new CachingContentRetriever(
-                        new HybridContentRetriever(embeddingStore(), minimaxEmbeddingModel,
-                                bm25Index, zhipuChatModel, ragProperties, metrics)),
+                        new HybridContentRetriever(embeddingStore(), embeddingModel,
+                                bm25Index, zhipuChatModel, buildRerankModel(zhipuChatModel),
+                                ragProperties, metrics)),
                 metrics);
+    }
+
+    /**
+     * rerank 实现按配置装配：siliconflow（key 为空自动降级 llm）| llm；rerank 关闭时 null。
+     */
+    private RerankModel buildRerankModel(ChatModel zhipuChatModel) {
+        if (!ragProperties.isRerankEnabled()) {
+            return null;
+        }
+        boolean siliconflow = "siliconflow".equalsIgnoreCase(rerankProvider)
+                && siliconFlowProperties.getApiKey() != null
+                && !siliconFlowProperties.getApiKey().isBlank();
+        if (siliconflow) {
+            log.info("Rerank provider: siliconflow model={}", siliconFlowProperties.getRerankModel());
+            return new SiliconFlowReranker(siliconFlowProperties.getBaseUrl(),
+                    siliconFlowProperties.getApiKey(), siliconFlowProperties.getRerankModel());
+        }
+        log.info("Rerank provider: llm (glm-4-flash)");
+        return new LlmReranker(zhipuChatModel);
     }
 }

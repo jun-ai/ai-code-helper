@@ -1,5 +1,6 @@
 package com.jun.aicodehelper.ai.rag;
 
+import com.jun.aicodehelper.ai.model.RerankModel;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.chat.ChatModel;
@@ -14,33 +15,32 @@ import dev.langchain4j.store.embedding.EmbeddingStore;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import dev.langchain4j.rag.query.Metadata;
 
 /**
- * RAG 检索主链路：query rewrite (+ history) → 向量 + BM25 召回 → RRF 融合 → rerank → 上下文压缩。
+ * RAG 检索主链路：query rewrite (+ history) → 向量 + BM25 召回 → RRF 融合 → rerank → （可选）父块回送。
  * 可选 HyDE：另起一路假设文档向量召回，弥补口语 query 与文档语义空间差距。
- * 每一步都可由 RagProperties 关掉降级。
- *
- * history 注入约定：调用方在 query.metadata() 里塞 "history" = List<String>，
- * 每条格式 "用户：xxx / AI：yyy"。ContentRetriever 默认实现读 metadata，
- * 上层 AiServices 可以通过 queryTransformer 注入。
+ * 每一步都可由 RagProperties 关掉降级；rerank 实现由外部注入（SiliconFlow / LLM）。
  */
 @Slf4j
 public class HybridContentRetriever implements ContentRetriever {
 
     private static final int RRF_K = 60;
     public static final String META_HISTORY = "history";
+    public static final String META_PARENT_ID = "parent_id";
 
     private final EmbeddingStore<TextSegment> embeddingStore;
     private final EmbeddingModel embeddingModel;
     private final Bm25Index bm25Index;
     private final QueryRewriter queryRewriter;
     private final HydeQueryExpander hydeExpander;
-    private final Reranker reranker;
+    private final RerankModel rerankModel;
     private final ContextualCompressor compressor;
     private final RagProperties props;
     private final com.jun.aicodehelper.ai.metrics.AppMetrics metrics;
@@ -49,6 +49,7 @@ public class HybridContentRetriever implements ContentRetriever {
                                    EmbeddingModel embeddingModel,
                                    Bm25Index bm25Index,
                                    ChatModel chatModel,
+                                   RerankModel rerankModel,
                                    RagProperties props,
                                    com.jun.aicodehelper.ai.metrics.AppMetrics metrics) {
         this.embeddingStore = embeddingStore;
@@ -58,7 +59,7 @@ public class HybridContentRetriever implements ContentRetriever {
         this.metrics = metrics;
         this.queryRewriter = props.isQueryRewriteEnabled() ? new QueryRewriter(chatModel, props.getQueryRewriteVariants()) : null;
         this.hydeExpander = props.isHydeEnabled() ? new HydeQueryExpander(chatModel) : null;
-        this.reranker = props.isRerankEnabled() ? new Reranker(chatModel, props.getFinalTopK()) : null;
+        this.rerankModel = rerankModel;
         this.compressor = props.isCompressEnabled() ? new ContextualCompressor(chatModel, props.getCompressMaxChars()) : null;
     }
 
@@ -112,14 +113,41 @@ public class HybridContentRetriever implements ContentRetriever {
             metrics.getRagFallback().increment();
             return List.of();
         }
+        // 父块回送开启时多取一倍子块：按 parent_id 去重后会缩水，保证父块数仍够 finalTopK
+        int rerankTopN = props.isParentChunkEnabled() ? props.getFinalTopK() * 2 : props.getFinalTopK();
         List<TextSegment> reranked;
-        if (reranker != null && topCandidates.size() >= props.getRerankMinCandidates()) {
-            reranked = reranker.rerank(q, topCandidates);
+        if (rerankModel != null && topCandidates.size() >= props.getRerankMinCandidates()) {
+            reranked = rerankModel.rerank(q, topCandidates, rerankTopN);
         } else {
-            reranked = topCandidates.subList(0, Math.min(props.getFinalTopK(), topCandidates.size()));
+            reranked = topCandidates.subList(0, Math.min(rerankTopN, topCandidates.size()));
         }
-        List<TextSegment> finalList = compressor != null ? compressor.compress(q, reranked) : reranked;
+        List<TextSegment> afterParent = toParents(reranked);
+        List<TextSegment> finalList = compressor != null ? compressor.compress(q, afterParent) : afterParent;
         return finalList.stream().map(Content::from).toList();
+    }
+
+    /**
+     * Small-to-big：子块按 parent_id 去重、用 metadata 里的 parent_text 回送父块全文。
+     * 无 parent_id 标记（旧数据/开关关闭）或 parent_text 缺失时原样返回子块。
+     */
+    private List<TextSegment> toParents(List<TextSegment> segments) {
+        if (!props.isParentChunkEnabled()) {
+            return segments;
+        }
+        List<TextSegment> out = new ArrayList<>();
+        Set<String> seenParentIds = new HashSet<>();
+        for (TextSegment seg : segments) {
+            if (out.size() >= props.getFinalTopK()) break;
+            String pid = seg.metadata().getString(META_PARENT_ID);
+            String parentText = seg.metadata().getString(HierarchicalSplitter.META_PARENT_TEXT);
+            if (pid == null || parentText == null) {
+                out.add(seg);
+                continue;
+            }
+            if (!seenParentIds.add(pid)) continue;
+            out.add(TextSegment.from(parentText, seg.metadata()));
+        }
+        return out;
     }
 
     @SuppressWarnings("unchecked")

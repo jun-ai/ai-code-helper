@@ -17,8 +17,17 @@ import java.util.regex.Pattern;
 public class RagTextSplitter {
 
     private static final Pattern HEADING_PATTERN = Pattern.compile("^(#{1,6})\\s+(.+)$");
-    private static final DocumentByParagraphSplitter PARAGRAPH_SPLITTER =
-            new DocumentByParagraphSplitter(1000, 200);
+
+    private final DocumentByParagraphSplitter paragraphSplitter;
+
+    public RagTextSplitter() {
+        this(1000);
+    }
+
+    /** maxSegmentSize 可配（small-to-big 的父块粒度） */
+    public RagTextSplitter(int maxSegmentSize) {
+        this.paragraphSplitter = new DocumentByParagraphSplitter(maxSegmentSize, maxSegmentSize / 5);
+    }
 
     public List<TextSegment> split(Document document) {
         String fileName = document.metadata().getString("file_name");
@@ -28,7 +37,7 @@ public class RagTextSplitter {
                 continue;
             }
             String prefix = buildPrefix(fileName, section.heading());
-            for (TextSegment seg : PARAGRAPH_SPLITTER.split(Document.from(section.body(), document.metadata()))) {
+            for (TextSegment seg : paragraphSplitter.split(Document.from(section.body(), document.metadata()))) {
                 result.add(TextSegment.from(prefix + "\n" + seg.text(), seg.metadata()));
             }
         }

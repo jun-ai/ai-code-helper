@@ -57,4 +57,13 @@ public class RagProperties {
 
     /** 上下文感知改写：传入最近 N 条对话作为 query 改写时的上下文（≤0 表示不启用） */
     private int queryRewriteHistoryTurns = 2;
+
+    /** Small-to-big：子块检索命中后回送父块全文；关掉即块直出 */
+    private boolean parentChunkEnabled = false;
+
+    /** 父块目标字数（送主 LLM 的粒度） */
+    private int parentMaxChars = 1000;
+
+    /** 子块目标字数（向量/BM25 检索粒度） */
+    private int childMaxChars = 300;
 }

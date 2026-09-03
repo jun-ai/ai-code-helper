@@ -40,13 +40,14 @@ import java.util.List;
 @Service
 public class RagIngestService {
 
-    private final RagTextSplitter textSplitter = new RagTextSplitter();
-
     @Resource
     private EmbeddingStore<TextSegment> embeddingStore;
 
     @Resource
-    private EmbeddingModel minimaxEmbeddingModel;
+    private EmbeddingModel embeddingModel;
+
+    @Resource
+    private HierarchicalSplitter hierarchicalSplitter;
 
     @Resource
     private Bm25Index bm25Index;
@@ -87,8 +88,8 @@ public class RagIngestService {
             Document document = Document.from(text);
             document.metadata().put("file_name", originalName);
             // 复用启动期 RagConfig 同一份切分器，上传和启动入库行为一致
-            List<TextSegment> segments = textSplitter.split(document);
-            List<Embedding> embeddings = minimaxEmbeddingModel.embedAll(segments).content();
+            List<TextSegment> segments = hierarchicalSplitter.split(document);
+            List<Embedding> embeddings = embeddingModel.embedAll(segments).content();
             embeddingStore.addAll(embeddings, segments);
             // BM25 同步追加：上传新文档后立即可被关键词召回
             if (ragProperties.isBm25Enabled()) {
@@ -141,11 +142,11 @@ public class RagIngestService {
         document.metadata().put("file_name", originalName);
         document.metadata().put("type", "image");
         document.metadata().put("image_path", savedAs);
-        List<TextSegment> segments = textSplitter.split(document);
+        List<TextSegment> segments = hierarchicalSplitter.split(document);
         if (segments.isEmpty()) {
             segments = List.of(TextSegment.from(body));
         }
-        List<Embedding> embeddings = minimaxEmbeddingModel.embedAll(segments).content();
+        List<Embedding> embeddings = embeddingModel.embedAll(segments).content();
         embeddingStore.addAll(embeddings, segments);
         if (ragProperties.isBm25Enabled()) {
             for (TextSegment seg : segments) {

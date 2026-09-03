@@ -14,7 +14,10 @@ spring:
 milvus:
   host: localhost
   port: 19530
-  collection-name: ai_code_helper
+  # 换 embedding 模型必须换 collection（维度不同无法复用旧集合）
+  collection-name: ai_code_helper_v2
+  # 向量维度：bge-m3=1024（embo-01=1536，回滚时两项一起改回）
+  dimension: 1024
 server:
   port: 8081
   servlet:
@@ -43,6 +46,11 @@ minimax:
   api-key: ${MINIMAX_API_KEY:}
   base-url: https://api.minimaxi.com/v1
   embedding-model: embo-01
+  # 备用对话模型：智谱挂了降级用（M2 会输出 <think> 思考块，后端自动剥离）
+  chat-model: MiniMax-M2
+llm:
+  # 主聊天链路（AiCodeHelperService）失败降级到 MiniMax-M2
+  failover-enabled: true
 aliyun:
   oss:
     # 总开关；false 时 OssService 所有方法直接抛 IllegalStateException（前端上传/知识库管理会失败）
@@ -74,11 +82,24 @@ api:
     requests-per-minute: 10
   sse:
     max-concurrent-per-ip: 5
+siliconflow:
+  api-key: ${SILICONFLOW_API_KEY:}
+  base-url: https://api.siliconflow.cn/v1
+  embedding-model: BAAI/bge-m3
+  rerank-model: BAAI/bge-reranker-v2-m3
 rag:
+  # embedding 选择：siliconflow（bge-m3）| minimax（embo-01）
+  embedding-provider: siliconflow
+  # rerank 选择：siliconflow（bge-reranker）| llm（glm-4-flash 打分）
+  rerank-provider: siliconflow
+  # small-to-big 父块回送：检索用子块，送主 LLM 用父块
+  parent-chunk-enabled: true
+  parent-max-chars: 1000
+  child-max-chars: 300
   # 向量召回 topK；越大 rerank 选择空间越大，embedding 调用也线性增加
   vector-top-k: 20
   # 向量召回最低 COSINE 分数，低于丢弃
-  vector-min-score: 0.5
+  vector-min-score: 0.4
   # BM25 召回 topK
   bm25-top-k: 20
   # BM25 关键词召回开关（关掉即纯向量检索）
@@ -93,15 +114,15 @@ rag:
   # 重排序开关（关掉即按融合分直排）
   rerank-enabled: true
   rerank-min-candidates: 5
-  # 上下文压缩开关（关掉即原段直送主 LLM）
-  compress-enabled: true
+  # 上下文压缩开关（关掉即原段直送主 LLM）；逐段串行 LLM 调用延迟大且有损，默认关
+  compress-enabled: false
   compress-max-chars: 200
   # 关键词权重（融合时），1 - keywordWeight 给向量
   keyword-weight: 0.3
   # 最终进入主 LLM 的段数
   final-top-k: 5
-  # 综合分低于该值的段被丢弃
-  final-min-score: 0.35
+  # 综合分低于该值的段被丢弃（BM25 单路第一 ≈0.3，阈值必须低于它，否则硬词兜底全灭）
+  final-min-score: 0.2
 management:
   endpoints:
     web:

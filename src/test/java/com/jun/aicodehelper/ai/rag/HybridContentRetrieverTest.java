@@ -57,7 +57,10 @@ class HybridContentRetrieverTest {
         props.setQueryRewriteEnabled(false);
         props.setRerankEnabled(false);
         props.setCompressEnabled(false);
-        retriever = new HybridContentRetriever(store, fakeModel, new Bm25Index(), noopChat, props, metrics);
+        // InMemoryEmbeddingStore 的 score 是 relevance=(cos+1)/2：cos=0 → 0.5。
+        // 默认 vectorMinScore=0.5 是边界放行，抬高到 0.75 才能滤掉低相关段（对齐测试意图）
+        props.setVectorMinScore(0.75);
+        retriever = new HybridContentRetriever(store, fakeModel, new Bm25Index(), noopChat, null, props, metrics);
     }
 
     private void add(String text, float[] vector) {
@@ -78,7 +81,7 @@ class HybridContentRetrieverTest {
 
     @Test
     void 语义分数低于硬门槛的切片应被过滤() {
-        // relevance=(cos+1)/2：cos=0 得 0.5，低于语义门槛 0.85；
+        // relevance=(cos+1)/2：cos=0 得 0.5 < vectorMinScore 0.75，向量层直接过滤；
         // 对照条目 cos=1.0（relevance=1.0）可保留
         add("向量无关文档", new float[]{0, 1, 0});
         add("数据库连接池配置详解", new float[]{1, 0, 0});
@@ -91,7 +94,7 @@ class HybridContentRetrieverTest {
 
     @Test
     void 召回通过但语义不足的切片也应被过滤() {
-        // cos=0.35 → relevance=0.675 过召回阈值 0.5，但低于语义门槛 0.85；
+        // cos=0.35 → relevance=0.675 < vectorMinScore 0.75，向量层过滤；
         // 对照条目 relevance=1.0 可保留
         add("架构设计的通用原则", new float[]{0.35f, 0.93675f, 0});
         add("数据库连接池配置详解", new float[]{1, 0, 0});

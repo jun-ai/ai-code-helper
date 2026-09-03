@@ -1,4 +1,4 @@
-package com.jun.aicodehelper.ai.rag;
+package com.jun.aicodehelper.ai.model;
 
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.chat.ChatModel;
@@ -11,47 +11,50 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * LLM-as-Rerank：用轻量模型（glm-4-flash）对候选段重打分排序。
- * 解析失败时按原顺序返回，保证降级可用。
+ * LLM-as-Rerank（glm-4-flash 打分）：SiliconFlow rerank 不可用时的降级路径。
+ * 解析行数不足视为整批失败退原序，避免错位打分污染排序。
  */
 @Slf4j
-public class Reranker {
+public class LlmReranker implements RerankModel {
 
     private static final Pattern SCORE_LINE = Pattern.compile(
             "(?:^|\\s|\\[|\\(|#)\\s*(\\d+)\\s*(?:分|\\]\\s*$|\\)\\s*$|\\.|:|$)");
 
-    private final ChatModel chatModel;
-    private final int topN;
+    /** 与切分器父块上限一致：截断过短会让长段关键信息丢失 */
+    private static final int MAX_DOC_CHARS = 1000;
 
-    public Reranker(ChatModel chatModel, int topN) {
+    private final ChatModel chatModel;
+
+    public LlmReranker(ChatModel chatModel) {
         this.chatModel = chatModel;
-        this.topN = topN;
     }
 
-    public List<TextSegment> rerank(String query, List<TextSegment> candidates) {
-        if (candidates.size() <= 1) {
-            return candidates;
-        }
+    @Override
+    public List<TextSegment> rerank(String query, List<TextSegment> candidates, int topN) {
         if (candidates.size() <= 1) {
             return candidates;
         }
         StringBuilder prompt = new StringBuilder();
         prompt.append("你是相关性打分员。请根据用户问题，给每段候选文档打 0~10 整数分，10=最相关。\n");
         prompt.append("要求：\n");
-        prompt.append("1. 严格只输出 N 行编号打分，第 i 行对应第 i 段；\n");
+        prompt.append("1. 严格只输出 ").append(candidates.size()).append(" 行打分，第 i 行形如「i. 分数」，与第 i 段一一对应；\n");
         prompt.append("2. 严禁任何解释、严禁额外空行；\n");
         prompt.append("3. 与问题无关的段打 0~3 分；\n");
         prompt.append("用户问题：").append(query).append("\n\n");
         for (int i = 0; i < candidates.size(); i++) {
             String text = candidates.get(i).text();
-            if (text.length() > 600) {
-                text = text.substring(0, 600) + "…";
+            if (text.length() > MAX_DOC_CHARS) {
+                text = text.substring(0, MAX_DOC_CHARS) + "…";
             }
             prompt.append("[").append(i + 1).append("] ").append(text).append("\n");
         }
         try {
             String answer = chatModel.chat(prompt.toString());
             double[] scores = parseScores(answer, candidates.size());
+            if (scores == null) {
+                log.warn("LlmRerank 解析行数不足，退原序前 {}", topN);
+                return candidates.subList(0, Math.min(topN, candidates.size()));
+            }
             List<Ranked> ranked = new ArrayList<>();
             for (int i = 0; i < candidates.size(); i++) {
                 ranked.add(new Ranked(candidates.get(i), scores[i]));
@@ -59,28 +62,28 @@ public class Reranker {
             ranked.sort(Comparator.comparingDouble(Ranked::score).reversed());
             return ranked.stream().limit(topN).map(Ranked::segment).toList();
         } catch (Exception e) {
-            log.warn("Rerank 失败，保留原顺序: err={}", e.getMessage());
+            log.warn("LlmRerank 失败，保留原顺序: err={}", e.getMessage());
             return candidates.subList(0, Math.min(topN, candidates.size()));
         }
     }
 
+    /**
+     * 解析打分行。解析出的行数不足 8 成视为整批失败返回 null（退原序），
+     * 防止部分解析导致编号错位、整批排序被污染。
+     */
     static double[] parseScores(String answer, int expected) {
         double[] scores = new double[expected];
-        // 默认给候选一个"中位分"，避免极端值
         java.util.Arrays.fill(scores, 5.0);
-        String[] lines = answer.split("\\n");
         int idx = 0;
-        for (String line : lines) {
+        for (String line : answer.split("\\n")) {
             if (idx >= expected) break;
             String trimmed = line.trim();
             if (trimmed.isEmpty()) continue;
-            // 优先匹配开头的 "1." "1)" "[1]" "(1)" 等编号
             int num = -1;
             Matcher m = SCORE_LINE.matcher(trimmed);
             if (m.find()) {
                 num = Integer.parseInt(m.group(1));
             } else {
-                // 退化：取第一个纯数字
                 Matcher m2 = Pattern.compile("(\\d+)").matcher(trimmed);
                 if (m2.find()) {
                     num = Integer.parseInt(m2.group(1));
@@ -91,7 +94,7 @@ public class Reranker {
                 idx++;
             }
         }
-        return scores;
+        return idx >= Math.max(1, expected * 4 / 5) ? scores : null;
     }
 
     private record Ranked(TextSegment segment, double score) {
@@ -99,6 +102,6 @@ public class Reranker {
 
     // 测试用
     static double[] parseScoresForTest(String answer, int expected) {
-        return new Reranker(null, 0).parseScores(answer, expected);
+        return new LlmReranker(null).parseScores(answer, expected);
     }
 }
